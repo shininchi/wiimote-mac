@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+    <NoStdLib>true</NoStdLib>
+    <NoConfig>true</NoConfig>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <ManagedDir Condition="'$(ManagedDir)' == ''">../yarg-copy/YARG.app/Contents/Resources/Data/Managed</ManagedDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="netstandard"><HintPath>$(ManagedDir)/netstandard.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="mscorlib"><HintPath>$(ManagedDir)/mscorlib.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="System"><HintPath>$(ManagedDir)/System.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(ManagedDir)/UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Unity.InputSystem"><HintPath>$(ManagedDir)/Unity.InputSystem.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PlasticBand"><HintPath>$(ManagedDir)/PlasticBand.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.shininchi.wiimote-guitar</string>
+	<key>CFBundleName</key>
+	<string>wiimote-test</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Needed to pair with and connect to your Wiimote.</string>
+</dict>
+</plist>
