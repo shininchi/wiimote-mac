@@ -9,8 +9,8 @@ similar tools only run on Windows, and this project is an attempt to fill that g
 on the Mac.
 
 > **Early prototype.** There's no download yet, so you build the app yourself. It has
-> only been tested on one Mac (Apple Silicon, macOS 15) with one original Wiimote and
-> one Guitar Hero III Les Paul.
+> only been tested on one Mac (Apple Silicon, macOS 15) with two original Wiimotes, one
+> Guitar Hero III Les Paul and one Classic Controller.
 
 ## What works
 
@@ -25,6 +25,8 @@ on the Mac.
 | Stick left and right | Menus only |
 | Stick up and down | Read, but not sent, because YARG would treat them as strums |
 | Touch bar, on later guitars | Read, but not sent to YARG |
+
+Each Wiimote is its own player. Two at once have been tested, and the app allows up to four.
 
 ## How it works
 
@@ -141,7 +143,7 @@ something to control in a game.
 | Add-on | Status |
 |---|---|
 | Guitar Hero guitar | Works in YARG |
-| Classic Controller and Pro | Plays as a guitar in YARG |
+| Classic Controller and Pro | Plays as a guitar in YARG. Pro is untested |
 | Guitar Hero drums | Identified. The natural next step, since YARG supports drums |
 | Nunchuk | Identified |
 | DJ Hero turntable | Identified |
@@ -152,7 +154,9 @@ Wii Remote Plus is expected to connect, but hasn't been tested.
 Other planned work:
 
 - A signed download, so people don't have to build the app
-- More games, starting with checking whether Clone Hero is possible
+- More games. Clone Hero isn't one of them: an add-on could work in principle, but its
+  [EULA](https://clonehero.net/eula/) doesn't allow modifying or reverse engineering the game,
+  so one can't be published here.
 
 ## Credits
 

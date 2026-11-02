@@ -76,7 +76,6 @@ namespace WiimoteGuitar
         {
             public WiiGuitar device;
             public string label;
-            public uint lastLoggedButtons;
             public long lastPacketAt;
             public bool released = true;
         }
@@ -187,12 +186,6 @@ namespace WiimoteGuitar
                 InputSystem.QueueStateEvent(guitar.device, received.state, InputState.currentTime - age);
                 guitar.lastPacketAt = received.arrivedAt;
                 guitar.released = false;
-
-                if (received.state.buttons != guitar.lastLoggedButtons)
-                {
-                    guitar.lastLoggedButtons = received.state.buttons;
-                    LogLines.Enqueue($"{guitar.label}: buttons {received.state.buttons:X3} whammy {received.state.whammy:F2}");
-                }
             }
 
             foreach (var guitar in Guitars.Values)
@@ -201,7 +194,6 @@ namespace WiimoteGuitar
                 {
                     InputSystem.QueueStateEvent(guitar.device, new WiiGuitarState());
                     guitar.released = true;
-                    guitar.lastLoggedButtons = 0;
                     LogLines.Enqueue($"{guitar.label}: no data, released all controls");
                 }
             }
