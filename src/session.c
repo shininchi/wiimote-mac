@@ -72,9 +72,9 @@ static void send_report(void *ctx, const uint8_t *report, size_t len) {
     }
 }
 
-static void send_to_bridge(slot *s, bool tilted) {
+static void send_to_bridge(slot *s) {
     wm_bridge_packet packet = wm_guitar_to_packet(&s->wm.guitar, &s->highest_whammy);
-    packet.tilt = tilted ? 1.0f : 0.0f;
+    packet.tilt = wm_tilt_pressing(&s->tilt) ? 1.0f : 0.0f;
     memcpy(packet.address, s->address, sizeof(packet.address));
 
     double now = now_seconds();
@@ -133,7 +133,7 @@ static void input_report_callback(void *ctx, IOReturn result, void *sender, IOHI
         // to a Classic Controller shouldn't set off star power.
         tilted = s->wm.ext == WM_EXT_GUITAR && wm_tilt_update(&s->tilt, s->wm.accel_y);
         if (session.bridge_socket >= 0) {
-            send_to_bridge(s, tilted);
+            send_to_bridge(s);
         }
     }
     if (session.callbacks.input) {

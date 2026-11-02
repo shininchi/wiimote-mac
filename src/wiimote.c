@@ -38,13 +38,17 @@
 #define STICK_RIGHT 48
 
 // Measured on a Les Paul: the neck axis reads 102 pointing up and 155 pointing down,
-// so about 128 when level and 26.5 per g. The trigger is about 55 degrees up and the
-// release about 30. The neck must stay raised for about 130ms, so that a hard strum
-// doesn't set it off.
-#define TILT_TRIGGER 107.0f
-#define TILT_RELEASE 115.0f
+// so about 128 when level and 26.5 per g. In a normal playing position it read 112-118,
+// so the release has to stay below that, or tilt never turns off. The trigger is about 60
+// degrees up and the release about 44. The neck must stay raised for about 130ms, so that
+// a hard strum doesn't set it off.
+#define TILT_TRIGGER 105.5f
+#define TILT_RELEASE 110.0f
 #define TILT_SMOOTHING 0.2f
 #define TILT_HOLD_REPORTS 12
+// Tilting presses star power briefly, about 300ms. Holding the press for as long as the
+// neck is raised would make a game spend star power as soon as the meter is ready.
+#define TILT_PRESS_REPORTS 30
 
 static void send_report_mode(wiimote *w, uint8_t mode) {
     const uint8_t report[] = {OUT_REPORT_MODE, REPORT_MODE_CONTINUOUS, mode};
@@ -316,8 +320,9 @@ bool wm_tilt_update(wm_tilt *tilt, uint8_t neck_axis) {
         if (tilt->reports_past_trigger < TILT_HOLD_REPORTS) {
             tilt->reports_past_trigger++;
         }
-        if (tilt->reports_past_trigger >= TILT_HOLD_REPORTS) {
+        if (tilt->reports_past_trigger >= TILT_HOLD_REPORTS && !tilt->active) {
             tilt->active = true;
+            tilt->press_reports_left = TILT_PRESS_REPORTS;
         }
     } else {
         tilt->reports_past_trigger = 0;
@@ -325,7 +330,14 @@ bool wm_tilt_update(wm_tilt *tilt, uint8_t neck_axis) {
             tilt->active = false;
         }
     }
+    if (tilt->press_reports_left > 0) {
+        tilt->press_reports_left--;
+    }
     return tilt->active;
+}
+
+bool wm_tilt_pressing(const wm_tilt *tilt) {
+    return tilt->press_reports_left > 0;
 }
 
 uint64_t wm_sync_pairing_key(const uint8_t host_address[6]) {

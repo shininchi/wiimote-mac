@@ -384,12 +384,14 @@ static void test_tilt(void) {
     feed_tilt(&tilt, 128, 50);
     assert(feed_tilt(&tilt, 102, 40)); // raised
     assert(tilt.active);
-    assert(feed_tilt(&tilt, 111, 40)); // dipping between the two limits holds it
+    assert(feed_tilt(&tilt, 108, 40)); // dipping between the two limits holds it
     assert(!feed_tilt(&tilt, 128, 40)); // back to level releases
 
     tilt = (wm_tilt){0};
     feed_tilt(&tilt, 128, 50);
     assert(!feed_tilt(&tilt, 112, 100)); // about 38 degrees is no longer enough
+    assert(!feed_tilt(&tilt, 107, 100)); // and neither is about 55
+    assert(feed_tilt(&tilt, 105, 100)); // about 60 is
 
     tilt = (wm_tilt){0};
     assert(!feed_tilt(&tilt, 102, 11)); // starting off raised still takes the hold time
@@ -509,6 +511,41 @@ static void test_classic_controller_plays_as_a_guitar(void) {
     assert(w.invalid_ext_frames == invalid + 1 && !w.guitar.green);
 }
 
+static void test_tilt_only_presses_star_power_briefly(void) {
+    wm_tilt tilt = {0};
+    feed_tilt(&tilt, 128, 50);
+    assert(!wm_tilt_pressing(&tilt));
+
+    // Raised, with the press starting as tilt turns on.
+    int reports = 0;
+    while (!wm_tilt_update(&tilt, 102)) {
+        reports++;
+        assert(reports < 100);
+    }
+    assert(wm_tilt_pressing(&tilt));
+
+    // The neck stays up, but the press ends so the game can't keep it waiting.
+    feed_tilt(&tilt, 102, 200);
+    assert(tilt.active && !wm_tilt_pressing(&tilt));
+
+    // No new press until the neck has come back down.
+    feed_tilt(&tilt, 102, 50);
+    assert(!wm_tilt_pressing(&tilt));
+    assert(!feed_tilt(&tilt, 113, 100)); // a normal position releases it
+    assert(!wm_tilt_pressing(&tilt));
+    assert(feed_tilt(&tilt, 102, 40));
+    assert(wm_tilt_pressing(&tilt));
+}
+
+static void test_tilt_releases_in_normal_playing_positions(void) {
+    const uint8_t positions[] = {112, 113, 114, 116, 117, 128};
+    for (size_t i = 0; i < sizeof(positions); i++) {
+        wm_tilt tilt = {0};
+        assert(feed_tilt(&tilt, 100, 40));
+        assert(!feed_tilt(&tilt, positions[i], 100));
+    }
+}
+
 static void test_sync_pairing_key_is_reversed_address(void) {
     const uint8_t address[6] = {0x00, 0x1B, 0x63, 0x84, 0x45, 0xE6};
     // The PIN bytes are E6 45 84 63 1B 00, first byte lowest in the integer.
@@ -531,6 +568,8 @@ int main(void) {
     test_tilt();
     test_each_player_gets_its_own_light();
     test_classic_controller_plays_as_a_guitar();
+    test_tilt_only_presses_star_power_briefly();
+    test_tilt_releases_in_normal_playing_positions();
     test_sync_pairing_key_is_reversed_address();
     printf("All tests passed\n");
     return 0;

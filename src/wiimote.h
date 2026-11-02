@@ -71,6 +71,7 @@ typedef struct {
 typedef struct {
     float smoothed;
     int reports_past_trigger;
+    int press_reports_left;
     bool active;
     bool started;
 } wm_tilt;
@@ -121,6 +122,9 @@ wm_bridge_packet wm_guitar_to_packet(const wm_guitar *guitar, uint8_t *highest_w
 // Call for each input report, with the motion reading along the guitar's neck.
 // Returns whether the neck is raised. Start with a zeroed wm_tilt.
 bool wm_tilt_update(wm_tilt *tilt, uint8_t neck_axis);
+
+// Whether tilting should be pressing star power right now, which only lasts briefly.
+bool wm_tilt_pressing(const wm_tilt *tilt);
 
 // The PIN for pairing with the SYNC button is this computer's Bluetooth address
 // in reverse. Returns it packed into the integer that macOS's pairing call takes.

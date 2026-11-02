@@ -15,14 +15,15 @@ wiimote-test: src/main.c $(CORE) $(HEADERS) src/Info.plist
 	codesign -f -s "$(CODESIGN_IDENTITY)" -i com.shininchi.wiimote-test $@
 
 # The add-on compiles against YARG's own files. Set YARG_APP to your YARG.app.
-app: $(CORE) $(HEADERS) src/app/main.m src/app/YargSetup.m src/app/YargSetup.h src/app/Info.plist
+
+app: $(CORE) $(HEADERS) src/app/main.m src/app/GameSetup.m src/app/GameSetup.h src/app/Info.plist
 	@test -n "$(YARG_APP)" || { echo 'Set YARG_APP to your YARG.app, for example: make app YARG_APP="/path/to/YARG.app"'; exit 1; }
 	(cd yarg-addon && dotnet build -c Release --nologo "-p:ManagedDir=$(YARG_APP)/Contents/Resources/Data/Managed")
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	$(CC) -Wall -Wextra -O2 -fobjc-arc -arch arm64 -arch x86_64 -mmacosx-version-min=12.0 \
 		$(FRAMEWORKS) -framework AppKit -weak_framework ServiceManagement -weak_framework UniformTypeIdentifiers \
-		src/app/main.m src/app/YargSetup.m $(CORE) -o $(APP)/Contents/MacOS/WiimoteMac
+		src/app/main.m src/app/GameSetup.m $(CORE) -o $(APP)/Contents/MacOS/WiimoteMac
 	cp src/app/Info.plist $(APP)/Contents/Info.plist
 	cp $(ADDON_DLL) $(APP)/Contents/Resources/
 	codesign --force --deep -s "$(CODESIGN_IDENTITY)" $(APP)

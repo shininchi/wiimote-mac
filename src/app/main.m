@@ -5,7 +5,7 @@
 #import <ServiceManagement/ServiceManagement.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
-#import "YargSetup.h"
+#import "GameSetup.h"
 
 #include "../pair.h"
 #include "../session.h"
@@ -49,6 +49,21 @@ static void OnConnected(void *ctx, int player) {
     });
 }
 
+// Logs what the motion sensor read when tilt changed, to help diagnose false triggers.
+static void OnInput(void *ctx, int player, const wiimote *wm, bool tilted) {
+    (void)ctx;
+    static bool last_tilted[SESSION_MAX_WIIMOTES];
+    if (tilted == last_tilted[player]) {
+        return;
+    }
+    last_tilted[player] = tilted;
+    NSString *message = [NSString stringWithFormat:@"Player %d tilt %@, motion %u %u %u", player + 1, tilted ? @"on" : @"off",
+                                                   wm->accel_x, wm->accel_y, wm->accel_z];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [delegate log:message];
+    });
+}
+
 static void OnExtensionChanged(void *ctx, int player, const wiimote *wm) {
     (void)ctx;
     NSString *name = @(wm_ext_name(wm->ext));
@@ -78,6 +93,7 @@ static void RunSession(void) {
         .connected = OnConnected,
         .disconnected = OnStateChange,
         .extension_changed = OnExtensionChanged,
+        .input = OnInput,
         .problem = OnProblem,
     };
     IOReturn started = session_start(&callbacks, true, SESSION_MAX_WIIMOTES, CFRunLoopGetCurrent());
@@ -95,7 +111,9 @@ static void RunSession(void) {
     NSStatusItem *_statusItem;
     NSMenuItem *_wiimoteLines[SESSION_MAX_WIIMOTES];
     NSMenuItem *_waitingLine, *_yargLine, *_noticeLine;
-    NSMenuItem *_pairItem, *_openYargItem, *_setupItem, *_removeItem, *_loginItem;
+    NSMenuItem *_pairItem, *_loginItem;
+    NSArray<GameSetup *> *_games;
+    NSMapTable<GameSetup *, NSMenuItem *> *_openItems, *_setupItems, *_removeItems;
     NSString *_notice, *_lastLoggedYargLine;
     BOOL _pairing, _settingUp, _inputBlocked;
     uint64_t _lastReports;
@@ -124,10 +142,20 @@ static void RunSession(void) {
 
     // For testing setup without the menu.
     NSArray *arguments = NSProcessInfo.processInfo.arguments;
-    if ([arguments containsObject:@"--add-to-yarg"]) {
-        [self addGuitarTo:[YargSetup currentYarg]];
-    } else if ([arguments containsObject:@"--remove-from-yarg"]) {
-        [self removeFromYarg];
+    for (GameSetup *game in _games) {
+        NSString *flagName = [[game.displayName lowercaseString] stringByReplacingOccurrencesOfString:@" " withString:@""];
+        NSUInteger add = [arguments indexOfObject:[@"--add-to-" stringByAppendingString:flagName]];
+        NSUInteger remove = [arguments indexOfObject:[@"--remove-from-" stringByAppendingString:flagName]];
+        NSUInteger flag = add != NSNotFound ? add : remove;
+        if (flag == NSNotFound) {
+            continue;
+        }
+        NSString *app = flag + 1 < arguments.count ? arguments[flag + 1] : [game currentApp];
+        if (add != NSNotFound) {
+            [self addGuitarToGame:game app:app];
+        } else {
+            [self removeFromGame:game app:app];
+        }
     }
 }
 
@@ -158,9 +186,23 @@ static void RunSession(void) {
     _yargLine = [self addInfoLineTo:menu];
     _noticeLine = [self addInfoLineTo:menu];
     [menu addItem:NSMenuItem.separatorItem];
-    _openYargItem = [self addActionTo:menu title:@"Open YARG" action:@selector(openYarg)];
-    _setupItem = [self addActionTo:menu title:@"Add Guitar to YARG" action:@selector(chooseAndAddGuitar)];
-    _removeItem = [self addActionTo:menu title:@"Remove from YARG" action:@selector(removeFromYarg)];
+    _games = @[ GameSetup.yarg ];
+    _openItems = [NSMapTable strongToStrongObjectsMapTable];
+    _setupItems = [NSMapTable strongToStrongObjectsMapTable];
+    _removeItems = [NSMapTable strongToStrongObjectsMapTable];
+    for (GameSetup *game in _games) {
+        NSString *name = game.displayName;
+        NSMenuItem *open = [self addActionTo:menu title:[@"Open " stringByAppendingString:name] action:@selector(openGame:)];
+        NSMenuItem *setup = [self addActionTo:menu title:@"" action:@selector(chooseAndAddGuitar:)];
+        NSMenuItem *remove = [self addActionTo:menu
+                                         title:[@"Remove from " stringByAppendingString:name]
+                                        action:@selector(removeFromGameItem:)];
+        open.representedObject = setup.representedObject = remove.representedObject = game;
+        [_openItems setObject:open forKey:game];
+        [_setupItems setObject:setup forKey:game];
+        [_removeItems setObject:remove forKey:game];
+        [menu addItem:NSMenuItem.separatorItem];
+    }
     _pairItem = [self addActionTo:menu title:@"Add a Wiimote" action:@selector(togglePairing)];
     [menu addItem:NSMenuItem.separatorItem];
     _loginItem = [self addActionTo:menu title:@"Start at Login" action:@selector(toggleLogin)];
@@ -208,33 +250,40 @@ static void RunSession(void) {
     _waitingLine.title = _inputBlocked ? @"Wiimote: blocked by macOS" : @"Press a button on your Wiimote to connect it";
 
     if (!guitar || !_receiving) {
-        _yargLine.title = @"YARG: waiting for a guitar";
+        _yargLine.title = @"Game: waiting for a guitar";
     } else {
-        _yargLine.title = session_yarg_listening() ? @"YARG: receiving the guitar" : @"YARG: not running with the add-on";
+        _yargLine.title = session_yarg_listening() ? @"Game: receiving the guitar" : @"Game: not open, or it doesn't have the add-on";
     }
     if (![_yargLine.title isEqualToString:_lastLoggedYargLine]) {
         _lastLoggedYargLine = _yargLine.title;
         [self log:_yargLine.title];
     }
 
-    NSString *yarg = [YargSetup currentYarg];
-    BOOL hasAddon = yarg && [YargSetup hasAddon:yarg];
     NSString *notice = _notice;
-    BOOL addonCurrent = hasAddon && [YargSetup addonIsCurrent:yarg];
-    if (!notice && !hasAddon) {
-        notice = @"Choose Add Guitar to YARG to get started";
-    } else if (!notice && !addonCurrent) {
-        notice = @"The add-on in YARG is out of date. Quit YARG and choose Update Add-on";
+    BOOL anyAddon = NO;
+    for (GameSetup *game in _games) {
+        NSString *app = [game currentApp];
+        BOOL hasAddon = app && [game hasAddon:app];
+        BOOL current = hasAddon && [game addonIsCurrent:app];
+        anyAddon = anyAddon || hasAddon;
+        if (!notice && hasAddon && !current) {
+            notice = [NSString stringWithFormat:@"The add-on in %@ is out of date", game.displayName];
+        }
+        NSString *name = game.displayName;
+        NSMenuItem *setup = [_setupItems objectForKey:game], *remove = [_removeItems objectForKey:game];
+        [_openItems objectForKey:game].enabled = !_settingUp && app != nil;
+        setup.enabled = !_settingUp;
+        setup.hidden = current;
+        setup.title = [NSString stringWithFormat:hasAddon ? @"Update Add-on in %@" : @"Add Guitar to %@", name];
+        remove.enabled = !_settingUp;
+        remove.hidden = !hasAddon;
+    }
+    if (!notice && !anyAddon) {
+        notice = @"Add the guitar to a game to get started";
     }
     _noticeLine.title = notice ?: @"";
     _noticeLine.hidden = notice == nil;
 
-    _openYargItem.enabled = !_settingUp && yarg != nil;
-    _setupItem.enabled = !_settingUp;
-    _setupItem.hidden = addonCurrent;
-    _setupItem.title = hasAddon ? @"Update Add-on in YARG" : @"Add Guitar to YARG";
-    _removeItem.enabled = !_settingUp;
-    _removeItem.hidden = !hasAddon;
     _pairItem.title = _pairing ? @"Cancel" : @"Add a Wiimote";
 
     if (@available(macOS 13.0, *)) {
@@ -305,56 +354,62 @@ static void RunSession(void) {
     [self refresh];
 }
 
-- (void)openYarg {
-    NSString *path = [YargSetup currentYarg];
-    if (path) {
-        [NSWorkspace.sharedWorkspace openApplicationAtURL:[NSURL fileURLWithPath:path]
+- (void)openGame:(NSMenuItem *)item {
+    NSString *app = [(GameSetup *)item.representedObject currentApp];
+    if (app) {
+        [NSWorkspace.sharedWorkspace openApplicationAtURL:[NSURL fileURLWithPath:app]
                                             configuration:[NSWorkspaceOpenConfiguration configuration]
                                         completionHandler:nil];
     }
 }
 
-- (void)chooseAndAddGuitar {
-    NSString *found = [YargSetup currentYarg];
+- (void)chooseAndAddGuitar:(NSMenuItem *)item {
+    GameSetup *game = item.representedObject;
+    NSString *found = [game currentApp];
     if (found) {
-        [self addGuitarTo:found];
+        [self addGuitarToGame:game app:found];
         return;
     }
     [NSApp activateIgnoringOtherApps:YES];
     NSOpenPanel *panel = [NSOpenPanel openPanel];
-    panel.message = @"Choose your YARG app.";
+    panel.message = [NSString stringWithFormat:@"Choose your %@ app.", game.displayName];
     panel.allowsMultipleSelection = NO;
     panel.canChooseDirectories = NO;
     panel.allowedContentTypes = @[ UTTypeApplicationBundle ];
     if ([panel runModal] == NSModalResponseOK) {
-        [self addGuitarTo:panel.URL.path];
+        [self addGuitarToGame:game app:panel.URL.path];
     }
 }
 
-- (void)addGuitarTo:(NSString *)yarg {
-    if (!yarg) {
-        [self log:@"Could not find YARG"];
+- (void)addGuitarToGame:(GameSetup *)game app:(NSString *)app {
+    if (!app) {
+        [self log:[@"Could not find " stringByAppendingString:game.displayName]];
         return;
     }
     _settingUp = YES;
-    _notice = @"Adding the guitar to YARG...";
-    [self log:[@"Adding to " stringByAppendingString:yarg]];
+    _notice = [NSString stringWithFormat:@"Adding the guitar to %@...", game.displayName];
+    [self log:[@"Adding to " stringByAppendingString:app]];
     [self refresh];
-    [YargSetup addTo:yarg
-          completion:^(NSString *error) {
+    [game addTo:app
+        completion:^(NSString *error) {
         [self setupFinished:error action:@"Adding"];
     }];
 }
 
-- (void)removeFromYarg {
-    NSString *yarg = [YargSetup currentYarg];
-    if (!yarg) {
+- (void)removeFromGameItem:(NSMenuItem *)item {
+    GameSetup *game = item.representedObject;
+    [self removeFromGame:game app:[game currentApp]];
+}
+
+- (void)removeFromGame:(GameSetup *)game app:(NSString *)app {
+    if (!app) {
         return;
     }
     _settingUp = YES;
+    [self log:[@"Removing from " stringByAppendingString:app]];
     [self refresh];
-    [YargSetup removeFrom:yarg
-               completion:^(NSString *error) {
+    [game removeFrom:app
+          completion:^(NSString *error) {
         [self setupFinished:error action:@"Removing"];
     }];
 }

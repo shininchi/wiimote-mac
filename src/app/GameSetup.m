@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#import "YargSetup.h"
+#import "GameSetup.h"
 
 #import <AppKit/AppKit.h>
-
-static NSString *const AddonName = @"WiimoteGuitarBridge";
-static NSString *const YargBundleId = @"in.yarg.game";
 
 static NSString *SupportFolder(void) {
     NSURL *support = [NSFileManager.defaultManager URLForDirectory:NSApplicationSupportDirectory
@@ -15,33 +12,20 @@ static NSString *SupportFolder(void) {
     return [support URLByAppendingPathComponent:@"wiimote-mac"].path;
 }
 
-static NSString *RecordPath(void) {
-    return [SupportFolder() stringByAppendingPathComponent:@"yarg-setup.plist"];
-}
-
-static NSString *BackupFolder(void) {
-    return [SupportFolder() stringByAppendingPathComponent:@"backup"];
-}
-
-static NSString *DataFolder(NSString *yarg) {
-    return [yarg stringByAppendingPathComponent:@"Contents/Resources/Data"];
-}
-
-static NSString *AddonPath(NSString *yarg) {
-    return [[[DataFolder(yarg) stringByAppendingPathComponent:@"Managed"] stringByAppendingPathComponent:AddonName]
-        stringByAppendingPathExtension:@"dll"];
-}
-
 static NSArray<NSString *> *ChangedFiles(void) {
     return @[ @"ScriptingAssemblies.json", @"RuntimeInitializeOnLoads.json" ];
 }
 
-static NSDate *GameCodeDate(NSString *yarg) {
-    NSString *code = [yarg stringByAppendingPathComponent:@"Contents/Resources/Data/Managed/Assembly-CSharp.dll"];
+static NSString *DataFolder(NSString *app) {
+    return [app stringByAppendingPathComponent:@"Contents/Resources/Data"];
+}
+
+static NSDate *GameCodeDate(NSString *app) {
+    NSString *code = [app stringByAppendingPathComponent:@"Contents/Resources/Data/Managed/Assembly-CSharp.dll"];
     return [NSFileManager.defaultManager attributesOfItemAtPath:code error:nil][NSFileModificationDate];
 }
 
-static NSString *FindLauncherYarg(void) {
+static NSString *FindYarg(void) {
     NSFileManager *files = NSFileManager.defaultManager;
     NSString *support = [SupportFolder() stringByDeletingLastPathComponent];
     NSData *data =
@@ -74,7 +58,7 @@ static NSString *UpdateJsonFile(NSString *path, BOOL (^change)(NSMutableDictiona
                                                                          error:nil]
                                      : nil;
     if (![json isKindOfClass:NSDictionary.class] || !change(json)) {
-        return [NSString stringWithFormat:@"This YARG's %@ looks different from what was expected.",
+        return [NSString stringWithFormat:@"This game's %@ looks different from what was expected.",
                                           path.lastPathComponent];
     }
     NSData *updated = [NSJSONSerialization dataWithJSONObject:json options:0 error:nil];
@@ -84,42 +68,103 @@ static NSString *UpdateJsonFile(NSString *path, BOOL (^change)(NSMutableDictiona
     return nil;
 }
 
-static NSString *RestoreBackup(NSString *yarg) {
+@implementation GameSetup {
+    NSString *_bundleId;
+    NSString *_addonName;
+    NSString *_addonNamespace;
+    NSString *_addonClass;
+    NSString *_recordName;
+    NSString *_backupName;
+    NSString *(*_find)(void);
+}
+
++ (GameSetup *)yarg {
+    static GameSetup *game;
+    if (!game) {
+        game = [[GameSetup alloc] init];
+        game->_displayName = @"YARG";
+        game->_bundleId = @"in.yarg.game";
+        game->_addonName = @"WiimoteGuitarBridge";
+        game->_addonNamespace = @"WiimoteGuitar";
+        game->_addonClass = @"Bridge";
+        game->_recordName = @"yarg-setup.plist";
+        game->_backupName = @"backup";
+        game->_find = FindYarg;
+    }
+    return game;
+}
+
+- (NSString *)recordPath {
+    return [SupportFolder() stringByAppendingPathComponent:_recordName];
+}
+
+- (NSString *)backupFolder {
+    return [SupportFolder() stringByAppendingPathComponent:_backupName];
+}
+
+- (NSString *)addonPathIn:(NSString *)app {
+    return [[[DataFolder(app) stringByAppendingPathComponent:@"Managed"] stringByAppendingPathComponent:_addonName]
+        stringByAppendingPathExtension:@"dll"];
+}
+
+- (BOOL)isRunning {
+    return [NSRunningApplication runningApplicationsWithBundleIdentifier:_bundleId].count > 0;
+}
+
+- (NSString *)currentApp {
+    NSString *found = _find();
+    if (found) {
+        return found;
+    }
+    NSString *chosen = [NSDictionary dictionaryWithContentsOfFile:[self recordPath]][@"app"];
+    return chosen && GameCodeDate(chosen) ? chosen : nil;
+}
+
+- (BOOL)hasAddon:(NSString *)app {
+    return [NSFileManager.defaultManager fileExistsAtPath:[self addonPathIn:app]];
+}
+
+- (BOOL)addonIsCurrent:(NSString *)app {
+    NSString *addon = [NSBundle.mainBundle pathForResource:_addonName ofType:@"dll"];
+    return addon && [NSFileManager.defaultManager contentsEqualAtPath:addon andPath:[self addonPathIn:app]];
+}
+
+- (NSString *)restoreBackupIn:(NSString *)app {
     NSFileManager *files = NSFileManager.defaultManager;
     for (NSString *name in ChangedFiles()) {
-        NSString *backup = [BackupFolder() stringByAppendingPathComponent:name];
-        NSString *target = [DataFolder(yarg) stringByAppendingPathComponent:name];
+        NSString *backup = [[self backupFolder] stringByAppendingPathComponent:name];
+        NSString *target = [DataFolder(app) stringByAppendingPathComponent:name];
         NSError *error;
         if (![files fileExistsAtPath:backup]) {
-            return @"The backup of YARG's original files is missing.";
+            return @"The backup of the game's original files is missing.";
         }
         if (![files removeItemAtPath:target error:&error] || ![files copyItemAtPath:backup toPath:target error:&error]) {
             return error.localizedDescription;
         }
     }
-    [files removeItemAtPath:AddonPath(yarg) error:nil];
+    [files removeItemAtPath:[self addonPathIn:app] error:nil];
     return nil;
 }
 
-static NSString *BackUpOriginals(NSString *yarg) {
+- (NSString *)backUpOriginalsIn:(NSString *)app {
     NSFileManager *files = NSFileManager.defaultManager;
     NSError *error;
-    [files removeItemAtPath:BackupFolder() error:nil];
-    if (![files createDirectoryAtPath:BackupFolder() withIntermediateDirectories:YES attributes:nil error:&error]) {
+    [files removeItemAtPath:[self backupFolder] error:nil];
+    if (![files createDirectoryAtPath:[self backupFolder] withIntermediateDirectories:YES attributes:nil error:&error]) {
         return error.localizedDescription;
     }
     for (NSString *name in ChangedFiles()) {
-        NSString *source = [DataFolder(yarg) stringByAppendingPathComponent:name];
-        if (![files copyItemAtPath:source toPath:[BackupFolder() stringByAppendingPathComponent:name] error:&error]) {
+        NSString *source = [DataFolder(app) stringByAppendingPathComponent:name];
+        if (![files copyItemAtPath:source toPath:[[self backupFolder] stringByAppendingPathComponent:name] error:&error]) {
             return error.localizedDescription;
         }
     }
     return nil;
 }
 
-static NSString *RegisterAddon(NSString *yarg) {
-    NSString *dllName = [AddonName stringByAppendingPathExtension:@"dll"];
-    NSString *problem = UpdateJsonFile([DataFolder(yarg) stringByAppendingPathComponent:@"ScriptingAssemblies.json"],
+- (NSString *)registerAddonIn:(NSString *)app {
+    NSString *dllName = [_addonName stringByAppendingPathExtension:@"dll"];
+    NSString *problem = UpdateJsonFile([DataFolder(app) stringByAppendingPathComponent:@"ScriptingAssemblies.json"],
                                        ^BOOL(NSMutableDictionary *json) {
         NSMutableArray *names = json[@"names"], *types = json[@"types"];
         if (![names isKindOfClass:NSMutableArray.class] || ![types isKindOfClass:NSMutableArray.class]) {
@@ -132,16 +177,16 @@ static NSString *RegisterAddon(NSString *yarg) {
     if (problem) {
         return problem;
     }
-    return UpdateJsonFile([DataFolder(yarg) stringByAppendingPathComponent:@"RuntimeInitializeOnLoads.json"],
+    return UpdateJsonFile([DataFolder(app) stringByAppendingPathComponent:@"RuntimeInitializeOnLoads.json"],
                           ^BOOL(NSMutableDictionary *json) {
         NSMutableArray *root = json[@"root"];
         if (![root isKindOfClass:NSMutableArray.class]) {
             return NO;
         }
         [root addObject:@{
-            @"assemblyName" : AddonName,
-            @"nameSpace" : @"WiimoteGuitar",
-            @"className" : @"Bridge",
+            @"assemblyName" : self->_addonName,
+            @"nameSpace" : self->_addonNamespace,
+            @"className" : self->_addonClass,
             @"methodName" : @"Initialize",
             @"loadTypes" : @0,
             @"isUnityClass" : @NO,
@@ -150,75 +195,52 @@ static NSString *RegisterAddon(NSString *yarg) {
     });
 }
 
-static BOOL YargIsRunning(void) {
-    return [NSRunningApplication runningApplicationsWithBundleIdentifier:YargBundleId].count > 0;
-}
-
-static NSString *Add(NSString *yarg) {
+- (NSString *)addAddonTo:(NSString *)app {
     NSFileManager *files = NSFileManager.defaultManager;
-    NSString *addon = [NSBundle.mainBundle pathForResource:AddonName ofType:@"dll"];
+    NSString *addon = [NSBundle.mainBundle pathForResource:_addonName ofType:@"dll"];
     if (!addon) {
         return @"This app is missing its add-on file.";
     }
-    if (YargIsRunning()) {
-        return @"Quit YARG, then try again.";
+    if ([self isRunning]) {
+        return [NSString stringWithFormat:@"Quit %@, then try again.", _displayName];
     }
 
     NSError *error;
-    if ([files fileExistsAtPath:AddonPath(yarg)]) {
+    if ([files fileExistsAtPath:[self addonPathIn:app]]) {
         // Already there, so this just refreshes the add-on file.
-        [files removeItemAtPath:AddonPath(yarg) error:nil];
-        return [files copyItemAtPath:addon toPath:AddonPath(yarg) error:&error] ? nil : error.localizedDescription;
+        [files removeItemAtPath:[self addonPathIn:app] error:nil];
+        return [files copyItemAtPath:addon toPath:[self addonPathIn:app] error:&error] ? nil : error.localizedDescription;
     }
 
-    NSString *problem = BackUpOriginals(yarg);
+    NSString *problem = [self backUpOriginalsIn:app];
     if (problem) {
         return problem;
     }
-    if (![files copyItemAtPath:addon toPath:AddonPath(yarg) error:&error]) {
+    if (![files copyItemAtPath:addon toPath:[self addonPathIn:app] error:&error]) {
         return error.localizedDescription;
     }
-    problem = RegisterAddon(yarg);
+    problem = [self registerAddonIn:app];
     if (problem) {
-        RestoreBackup(yarg);
+        [self restoreBackupIn:app];
         return problem;
     }
-    [@{@"yarg" : yarg} writeToFile:RecordPath() atomically:YES];
+    [@{@"app" : app} writeToFile:[self recordPath] atomically:YES];
     return nil;
 }
 
-@implementation YargSetup
-
-+ (NSString *)currentYarg {
-    NSString *found = FindLauncherYarg();
-    if (found) {
-        return found;
-    }
-    NSString *chosen = [NSDictionary dictionaryWithContentsOfFile:RecordPath()][@"yarg"];
-    return chosen && GameCodeDate(chosen) ? chosen : nil;
-}
-
-+ (BOOL)hasAddon:(NSString *)yarg {
-    return [NSFileManager.defaultManager fileExistsAtPath:AddonPath(yarg)];
-}
-
-+ (BOOL)addonIsCurrent:(NSString *)yarg {
-    NSString *addon = [NSBundle.mainBundle pathForResource:AddonName ofType:@"dll"];
-    return addon && [NSFileManager.defaultManager contentsEqualAtPath:addon andPath:AddonPath(yarg)];
-}
-
-+ (void)addTo:(NSString *)yarg completion:(void (^)(NSString *_Nullable))completion {
+- (void)addTo:(NSString *)app completion:(void (^)(NSString *_Nullable))completion {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        NSString *problem = Add(yarg);
+        NSString *problem = [self addAddonTo:app];
         dispatch_async(dispatch_get_main_queue(), ^{
             completion(problem);
         });
     });
 }
 
-+ (void)removeFrom:(NSString *)yarg completion:(void (^)(NSString *_Nullable))completion {
+- (void)removeFrom:(NSString *)app completion:(void (^)(NSString *_Nullable))completion {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        NSString *problem = YargIsRunning() ? @"Quit YARG, then try again." : RestoreBackup(yarg);
+        NSString *problem = [self isRunning] ? [NSString stringWithFormat:@"Quit %@, then try again.", self->_displayName]
+                                             : [self restoreBackupIn:app];
         dispatch_async(dispatch_get_main_queue(), ^{
             completion(problem);
         });
