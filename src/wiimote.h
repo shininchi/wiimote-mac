@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Wiimote protocol and extension decoding. No macOS dependencies, so it can be
 // tested against a simulated Wiimote.
 #ifndef WIIMOTE_H

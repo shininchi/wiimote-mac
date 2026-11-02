@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Finds a paired Wiimote, keeps it connected and optionally sends its guitar to YARG.
 // Shared by the terminal tool and the menu bar app.
 #ifndef SESSION_H

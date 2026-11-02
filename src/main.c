@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Terminal tool: shows what a Wiimote and its add-on send to this Mac and how steady
 // the connection is, and can send a guitar to YARG.
 #include <CoreFoundation/CoreFoundation.h>

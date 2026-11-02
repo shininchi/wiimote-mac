@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Menu bar app: pairs with and connects to a Wiimote, and sends its guitar to YARG.
 #import <AppKit/AppKit.h>
 #import <IOKit/hidsystem/IOHIDLib.h>

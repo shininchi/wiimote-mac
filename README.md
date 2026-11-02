@@ -146,8 +146,12 @@ Other planned work:
 
 ## License
 
-Not chosen yet. The license needs to take into account the projects above, in particular
-Dolphin's GPL-licensed pairing tool and YARG's LGPL license.
+- **The app and terminal tool**, along with everything else unless noted, are licensed
+  under [GPL-3.0-or-later](LICENSE). The pairing code is based on Dolphin's WiimotePair,
+  which is GPL-2.0-or-later.
+- **The YARG add-on** in `yarg-addon/` is licensed under
+  [LGPL-3.0-or-later](yarg-addon/LICENSE), matching YARG. The LGPL builds on the GPL, whose
+  text is in [yarg-addon/LICENSE.GPL-3.0](yarg-addon/LICENSE.GPL-3.0).
 
 This project isn't affiliated with or endorsed by Nintendo, Apple or the YARG project.
 It doesn't include YARG or any game files.

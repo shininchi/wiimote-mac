@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 // Receives the guitar's state from the wiimote-test tool over a local connection and
 // presents it to YARG as a regular five-fret guitar.
 using System;

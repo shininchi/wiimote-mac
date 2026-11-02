@@ -1,6 +1,11 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Pairing approach based on WiimotePair, Copyright 2024 Dolphin Emulator Project,
+// licensed under GPL-2.0-or-later: https://github.com/dolphin-emu/WiimotePair
+//
 // Pairs a Wiimote with this Mac. Wiimotes need a PIN made of raw bytes, which the
 // public IOBluetooth API can't send, so this uses the same private calls that
-// Dolphin's WiimotePair relies on. They are checked before use, so a macOS update
+// WiimotePair relies on. They are checked before use, so a macOS update
 // that removes them gives an error instead of a crash.
 #import <CoreBluetooth/CoreBluetooth.h>
 #import <Foundation/Foundation.h>

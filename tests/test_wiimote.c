@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Runs the protocol code against a simulated Wiimote.
 #include <assert.h>
 #include <stddef.h>
