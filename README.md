@@ -8,8 +8,7 @@ The first supported setup is a **Wii Guitar Hero guitar in
 similar tools only run on Windows, and this project is an attempt to fill that gap
 on the Mac.
 
-> **Early prototype.** There's no download yet, so you build the app yourself. It has
-> only been tested on one Mac (Apple Silicon, macOS 15) with two original Wiimotes, one
+> **First release.** It has only been tested on one Mac (Apple Silicon, macOS 15) with two original Wiimotes, one
 > Guitar Hero III Les Paul and one Classic Controller.
 
 ## What works
@@ -46,10 +45,22 @@ needs its own add-on, and so far only YARG has one.**
 ## Requirements
 
 - macOS 12 or later is expected to work. Only macOS 15 on Apple Silicon has been tested.
-- Xcode command line tools and the [.NET SDK](https://dotnet.microsoft.com/download)
 - An original Wiimote, a Guitar Hero guitar and YARG. This has been tested with YARG v0.15.0.
 
-## Build
+## Install
+
+1. Download `WiimoteMac-1.0.0.zip` from
+   [Releases](https://github.com/shininchi/wiimote-mac/releases), unzip it and move
+   `WiimoteMac.app` to your Applications folder.
+2. Open it. macOS will refuse, because the app isn't notarized by Apple.
+3. Go to **System Settings > Privacy & Security** and choose **Open Anyway**.
+4. Allow Bluetooth when asked. An icon appears in the menu bar, with no window or Dock icon.
+
+## Build from source
+
+This needs the Xcode command line tools and the
+[.NET SDK](https://dotnet.microsoft.com/download).
+
 
 Compiling the add-on needs YARG's files, so point `YARG_APP` at your `YARG.app`. With
 the YARC Launcher, it's in the launcher's `YARG Installs` folder.
@@ -153,7 +164,7 @@ Wii Remote Plus is expected to connect, but hasn't been tested.
 
 Other planned work:
 
-- A signed download, so people don't have to build the app
+- A notarized download, so macOS doesn't block the first launch
 - More games. Clone Hero isn't one of them: an add-on could work in principle, but its
   [EULA](https://clonehero.net/eula/) doesn't allow modifying or reverse engineering the game,
   so one can't be published here.
