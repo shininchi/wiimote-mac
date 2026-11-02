@@ -8,7 +8,7 @@ APP = build/WiimoteMac.app
 wiimote-test: src/main.c $(CORE) $(HEADERS) src/Info.plist
 	$(CC) -Wall -Wextra -O2 -fobjc-arc $(FRAMEWORKS) \
 		-Wl,-sectcreate,__TEXT,__info_plist,src/Info.plist src/main.c $(CORE) -o $@
-	codesign -f -s - -i com.shininchi.wiimote-guitar $@
+	codesign -f -s - -i com.shininchi.wiimote-test $@
 
 # The add-on compiles against YARG's own files. Set YARG_APP to your YARG.app.
 app: $(CORE) $(HEADERS) src/app/main.m src/app/YargSetup.m src/app/YargSetup.h src/app/Info.plist

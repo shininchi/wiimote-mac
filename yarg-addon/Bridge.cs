@@ -60,7 +60,7 @@ namespace WiimoteGuitar
 
         private static readonly string LogPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.Personal),
-            "Library/Logs/wiimote-guitar-addon.log");
+            "Library/Logs/wiimote-mac-addon.log");
 
         private struct Received
         {

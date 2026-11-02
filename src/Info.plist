@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>com.shininchi.wiimote-guitar</string>
+	<string>com.shininchi.wiimote-test</string>
 	<key>CFBundleName</key>
 	<string>wiimote-test</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>

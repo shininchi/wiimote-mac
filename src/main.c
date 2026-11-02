@@ -20,7 +20,7 @@
 // Private libSystem call, also used by Qt and LLVM. May be missing on other versions.
 extern int responsibility_spawnattrs_setdisclaim(posix_spawnattr_t *attributes, int disclaim) __attribute__((weak_import));
 
-#define DISCLAIMED_ENV "WIIMOTE_GUITAR_DISCLAIMED"
+#define DISCLAIMED_ENV "WIIMOTE_MAC_DISCLAIMED"
 #define DISPLAY_INTERVAL 0.05
 // Reports should arrive every 10ms. A gap this long would be felt while playing.
 #define NOTICEABLE_GAP 0.050
