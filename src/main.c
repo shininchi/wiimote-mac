@@ -1,35 +1,26 @@
-// Shows what a Wiimote and its add-on send to this Mac, and how steady the
-// connection is, to check that a Wii guitar is usable before building on it.
+// Terminal tool: shows what a Wiimote and its add-on send to this Mac and how steady
+// the connection is, and can send a guitar to YARG.
 #include <CoreFoundation/CoreFoundation.h>
-#include <IOKit/hid/IOHIDLib.h>
-#include <IOKit/hid/IOHIDManager.h>
 
-#include <arpa/inet.h>
 #include <crt_externs.h>
 #include <limits.h>
 #include <mach-o/dyld.h>
 #include <signal.h>
-#include <netinet/in.h>
 #include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "pair.h"
+#include "session.h"
 #include "wiimote.h"
 
 // Private libSystem call, also used by Qt and LLVM. May be missing on other versions.
 extern int responsibility_spawnattrs_setdisclaim(posix_spawnattr_t *attributes, int disclaim) __attribute__((weak_import));
 
 #define DISCLAIMED_ENV "WIIMOTE_GUITAR_DISCLAIMED"
-#define NINTENDO_VENDOR_ID 0x057E
-#define WIIMOTE_PRODUCT_ID 0x0306
-#define WIIMOTE_PLUS_PRODUCT_ID 0x0330
-
-#define INPUT_BUFFER_SIZE 64
 #define DISPLAY_INTERVAL 0.05
 // Reports should arrive every 10ms. A gap this long would be felt while playing.
 #define NOTICEABLE_GAP 0.050
@@ -44,22 +35,16 @@ typedef struct {
 } range;
 
 static struct {
-    IOHIDDeviceRef device;
-    wiimote wm;
-    uint8_t input_buffer[INPUT_BUFFER_SIZE];
+    const wiimote *wm;
     bool debug;
     bool show_live_line;
-    int bridge_socket;
-    uint8_t highest_whammy;
-    wm_tilt tilt;
-    bool seen_tilt;
     bool line_open;
-    wm_ext_type announced_ext;
-    bool ext_announced;
+    bool tilted;
+    bool seen_tilt;
 
     double connected_at, last_report_at, longest_gap;
     double total_connected_time;
-    uint64_t noticeable_gaps, connections, send_failures, earlier_reports, earlier_invalid_frames;
+    uint64_t noticeable_gaps, connections, send_problems, invalid_frames_counted;
     uint64_t gap_counts[GAP_BUCKETS];
 
     bool seen_green, seen_red, seen_yellow, seen_blue, seen_orange;
@@ -96,19 +81,6 @@ static void print_hex(const char *label, const uint8_t *data, size_t len) {
     printf("\n");
 }
 
-static void send_report(void *ctx, const uint8_t *report, size_t len) {
-    (void)ctx;
-    if (app.debug) {
-        print_hex("->", report, len);
-    }
-    IOReturn result = IOHIDDeviceSetReport(app.device, kIOHIDReportTypeOutput, report[0], report, (CFIndex)len);
-    if (result != kIOReturnSuccess) {
-        app.send_failures++;
-        end_line();
-        printf("Could not send report 0x%02X to the Wiimote (error 0x%08X)\n", report[0], result);
-    }
-}
-
 static void track_guitar(const wm_guitar *g) {
     app.seen_green |= g->green;
     app.seen_red |= g->red;
@@ -124,30 +96,15 @@ static void track_guitar(const wm_guitar *g) {
     track(&app.stick_y, g->stick_y);
 }
 
-static void announce_extension(void) {
-    if (app.ext_announced && app.announced_ext == app.wm.ext) {
-        return;
-    }
-    app.announced_ext = app.wm.ext;
-    app.ext_announced = true;
-    end_line();
-    printf("Plugged into the Wiimote: %s\n", wm_ext_name(app.wm.ext));
-    if (app.wm.ext == WM_EXT_UNKNOWN) {
-        print_hex("  Add-on ID:", app.wm.ext_id, sizeof(app.wm.ext_id));
-    } else if (app.wm.ext != WM_EXT_GUITAR && app.wm.ext != WM_EXT_NONE) {
-        printf("  This tool only decodes guitars so far, so it will show raw data.\n");
-    }
-}
-
 static void print_status_line(void) {
-    const wiimote *w = &app.wm;
+    const wiimote *w = app.wm;
     char line[160];
     if (w->ext == WM_EXT_GUITAR) {
         const wm_guitar *g = &w->guitar;
         snprintf(line, sizeof(line), "%c %c %c %c %c | %-4s | whammy %2u | %c %c | %-4s | accel %3u %3u %3u",
                  g->green ? 'G' : '.', g->red ? 'R' : '.', g->yellow ? 'Y' : '.', g->blue ? 'B' : '.',
                  g->orange ? 'O' : '.', g->strum_up ? "UP" : g->strum_down ? "DOWN" : "-", g->whammy,
-                 g->minus ? '-' : '.', g->plus ? '+' : '.', app.tilt.active ? "TILT" : "-", w->accel_x, w->accel_y,
+                 g->minus ? '-' : '.', g->plus ? '+' : '.', app.tilted ? "TILT" : "-", w->accel_x, w->accel_y,
                  w->accel_z);
     } else if (w->ext == WM_EXT_NONE) {
         snprintf(line, sizeof(line), "buttons %04X | accel %3u %3u %3u", w->buttons, w->accel_x, w->accel_y,
@@ -164,34 +121,39 @@ static void print_status_line(void) {
     app.line_open = true;
 }
 
-static void input_report_callback(void *ctx, IOReturn result, void *sender, IOHIDReportType type, uint32_t report_id,
-                                  uint8_t *report, CFIndex length) {
-    (void)ctx, (void)sender, (void)type;
-    if (result != kIOReturnSuccess || length <= 0) {
-        return;
-    }
+static void on_connected(void *ctx) {
+    (void)ctx;
+    app.connections++;
+    app.connected_at = now_seconds();
+    app.last_report_at = 0;
+    end_line();
+    printf("Wiimote connected.\n");
+}
 
-    // Keep the report ID as the first byte, in case macOS has stripped it.
-    uint8_t buffer[INPUT_BUFFER_SIZE + 1];
-    size_t len = (size_t)length;
-    if (report[0] == report_id) {
-        memcpy(buffer, report, len);
-    } else {
-        buffer[0] = (uint8_t)report_id;
-        memcpy(buffer + 1, report, len);
-        len++;
-    }
+static void on_disconnected(void *ctx) {
+    (void)ctx;
+    app.total_connected_time += now_seconds() - app.connected_at;
+    app.connected_at = 0;
+    end_line();
+    printf("Wiimote disconnected. Waiting for it to come back...\n");
+}
 
-    bool is_input = wm_handle_report(&app.wm, buffer, len);
-    if (app.debug && !is_input) {
-        print_hex("<-", buffer, len);
+static void on_extension_changed(void *ctx, const wiimote *wm) {
+    (void)ctx;
+    end_line();
+    printf("Plugged into the Wiimote: %s\n", wm_ext_name(wm->ext));
+    if (wm->ext == WM_EXT_UNKNOWN) {
+        print_hex("  Add-on ID:", wm->ext_id, sizeof(wm->ext_id));
+    } else if (wm->ext != WM_EXT_GUITAR && wm->ext != WM_EXT_NONE) {
+        printf("  This tool only decodes guitars so far, so it will show raw data.\n");
     }
-    if (app.wm.stage == WM_STAGE_RUNNING) {
-        announce_extension();
-    }
-    if (!is_input) {
-        return;
-    }
+}
+
+static void on_input(void *ctx, const wiimote *wm, bool tilted) {
+    (void)ctx;
+    app.wm = wm;
+    app.tilted = tilted;
+    app.seen_tilt |= tilted;
 
     double now = now_seconds();
     if (app.last_report_at > 0) {
@@ -206,81 +168,38 @@ static void input_report_callback(void *ctx, IOReturn result, void *sender, IOHI
     }
     app.last_report_at = now;
 
-    if (app.wm.ext == WM_EXT_GUITAR) {
-        track_guitar(&app.wm.guitar);
-        app.seen_tilt |= wm_tilt_update(&app.tilt, app.wm.accel_y);
-        if (app.bridge_socket >= 0) {
-            wm_bridge_packet packet = wm_guitar_to_packet(&app.wm.guitar, &app.highest_whammy);
-            packet.tilt = app.tilt.active ? 1.0f : 0.0f;
-            send(app.bridge_socket, &packet, sizeof(packet), 0);
-        }
+    if (wm->ext == WM_EXT_GUITAR) {
+        track_guitar(&wm->guitar);
     }
-    track(&app.accel_x, app.wm.accel_x);
-    track(&app.accel_y, app.wm.accel_y);
-    track(&app.accel_z, app.wm.accel_z);
+    track(&app.accel_x, wm->accel_x);
+    track(&app.accel_y, wm->accel_y);
+    track(&app.accel_z, wm->accel_z);
 }
 
-static bool is_wiimote(IOHIDDeviceRef device) {
-    CFNumberRef product = IOHIDDeviceGetProperty(device, CFSTR(kIOHIDProductIDKey));
-    int product_id = 0;
-    if (product) {
-        CFNumberGetValue(product, kCFNumberIntType, &product_id);
+static void on_report_seen(void *ctx, bool outgoing, const uint8_t *report, size_t len) {
+    (void)ctx;
+    if (app.debug) {
+        print_hex(outgoing ? "->" : "<-", report, len);
     }
-    if (product_id == WIIMOTE_PRODUCT_ID || product_id == WIIMOTE_PLUS_PRODUCT_ID) {
-        return true;
-    }
-    CFStringRef name = IOHIDDeviceGetProperty(device, CFSTR(kIOHIDProductKey));
-    return name && CFStringFind(name, CFSTR("RVL-CNT"), 0).location != kCFNotFound;
 }
 
-static void device_matched(void *ctx, IOReturn result, void *sender, IOHIDDeviceRef device) {
-    (void)ctx, (void)result, (void)sender;
-    if (app.device || !is_wiimote(device)) {
-        return;
-    }
-    IOReturn opened = IOHIDDeviceOpen(device, kIOHIDOptionsTypeNone);
-    if (opened != kIOReturnSuccess) {
-        end_line();
-        printf("Found a Wiimote but could not open it (error 0x%08X)\n", opened);
-        return;
-    }
-    app.device = device;
-    app.connections++;
-    app.connected_at = now_seconds();
-    app.last_report_at = 0;
-    app.ext_announced = false;
+static void on_problem(void *ctx, const char *message) {
+    (void)ctx;
+    app.send_problems++;
     end_line();
-    printf("Wiimote connected.\n");
-    IOHIDDeviceRegisterInputReportCallback(device, app.input_buffer, INPUT_BUFFER_SIZE, input_report_callback, NULL);
-    app.earlier_reports += app.wm.input_reports;
-    app.earlier_invalid_frames += app.wm.invalid_ext_frames;
-    wm_init(&app.wm, send_report, NULL);
-    wm_start(&app.wm);
+    printf("%s\n", message);
 }
 
-static void device_removed(void *ctx, IOReturn result, void *sender, IOHIDDeviceRef device) {
-    (void)ctx, (void)result, (void)sender;
-    if (device != app.device) {
-        return;
-    }
-    app.total_connected_time += now_seconds() - app.connected_at;
-    app.connected_at = 0;
-    app.device = NULL;
+static void on_pair_status(pair_event event, const char *message) {
+    (void)event;
     end_line();
-    printf("Wiimote disconnected. Waiting for it to come back...\n");
+    printf("%s\n", message);
 }
 
 static void display_timer(CFRunLoopTimerRef timer, void *info) {
     (void)timer, (void)info;
-    if (app.device && app.wm.input_reports > 0 && app.show_live_line) {
+    if (app.wm && session_is_connected() && app.show_live_line) {
         print_status_line();
-    }
-}
-
-static void protocol_timer(CFRunLoopTimerRef timer, void *info) {
-    (void)timer, (void)info;
-    if (app.device) {
-        wm_tick(&app.wm);
     }
 }
 
@@ -311,7 +230,7 @@ static void print_range(const char *name, const range *r) {
     }
 }
 
-static void print_summary(uint64_t reports) {
+static void print_summary(void) {
     end_line();
     printf("\n--- Summary ---\n");
     if (app.connections == 0) {
@@ -320,6 +239,7 @@ static void print_summary(uint64_t reports) {
         return;
     }
 
+    uint64_t reports = session_input_reports();
     double connected = app.total_connected_time;
     if (app.connected_at > 0) {
         connected += now_seconds() - app.connected_at;
@@ -331,8 +251,8 @@ static void print_summary(uint64_t reports) {
            connected > 0 ? (double)reports / connected : 0);
     printf("  Longest gap:        %.0f ms\n", app.longest_gap * 1000);
     printf("  Gaps over %.0f ms:    %llu\n", NOTICEABLE_GAP * 1000, (unsigned long long)app.noticeable_gaps);
-    printf("  Failed sends:       %llu\n", (unsigned long long)app.send_failures);
-    printf("  Glitched frames:    %llu\n", (unsigned long long)(app.earlier_invalid_frames + app.wm.invalid_ext_frames));
+    printf("  Problems:           %llu\n", (unsigned long long)app.send_problems);
+    printf("  Glitched frames:    %llu\n", (unsigned long long)(app.wm ? app.wm->invalid_ext_frames : 0));
 
     printf("\nTime between reports\n");
     for (int i = 0; i < GAP_BUCKETS; i++) {
@@ -375,22 +295,6 @@ static void print_usage(const char *program) {
     printf("  --no-display Hide the live status line, to measure without its overhead\n");
     printf("  --debug      Print the setup messages sent to and from the Wiimote\n");
     printf("  --seconds N  Stop after N seconds instead of waiting for Ctrl-C\n");
-}
-
-// Opens the local connection to the YARG add-on. Sends don't wait for a reply, so
-// this works whether or not YARG is running.
-static int open_bridge_socket(void) {
-    int fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0) {
-        return -1;
-    }
-    struct sockaddr_in address = {.sin_family = AF_INET, .sin_port = htons(WM_BRIDGE_PORT)};
-    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    if (connect(fd, (struct sockaddr *)&address, sizeof(address)) != 0) {
-        close(fd);
-        return -1;
-    }
-    return fd;
 }
 
 // macOS checks Bluetooth permission against the app that launched a process, such
@@ -444,62 +348,46 @@ int main(int argc, char **argv) {
         become_responsible_for_permissions(argv);
     }
     setvbuf(stdout, NULL, _IOLBF, 0);
-    app.bridge_socket = -1;
+    app.show_live_line = isatty(STDOUT_FILENO) && !no_display;
     if (use_yarg) {
-        app.bridge_socket = open_bridge_socket();
-        if (app.bridge_socket < 0) {
-            printf("Could not open the connection to YARG.\n");
-            return 1;
-        }
         printf("Sending the guitar to YARG.\n");
     }
-    app.show_live_line = isatty(STDOUT_FILENO) && !no_display;
 
-    IOHIDManagerRef manager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
-    int vendor = NINTENDO_VENDOR_ID;
-    CFNumberRef vendor_number = CFNumberCreate(NULL, kCFNumberIntType, &vendor);
-    const void *keys[] = {CFSTR(kIOHIDVendorIDKey)};
-    const void *values[] = {vendor_number};
-    CFDictionaryRef matching = CFDictionaryCreate(NULL, keys, values, 1, &kCFTypeDictionaryKeyCallBacks,
-                                                  &kCFTypeDictionaryValueCallBacks);
-    IOHIDManagerSetDeviceMatching(manager, matching);
-    CFRelease(matching);
-    CFRelease(vendor_number);
-
-    IOHIDManagerRegisterDeviceMatchingCallback(manager, device_matched, NULL);
-    IOHIDManagerRegisterDeviceRemovalCallback(manager, device_removed, NULL);
-    IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
-
-    IOReturn opened = IOHIDManagerOpen(manager, kIOHIDOptionsTypeNone);
-    if (opened == kIOReturnNotPermitted) {
+    session_callbacks callbacks = {
+        .connected = on_connected,
+        .disconnected = on_disconnected,
+        .extension_changed = on_extension_changed,
+        .input = on_input,
+        .report_seen = on_report_seen,
+        .problem = on_problem,
+    };
+    IOReturn started = session_start(&callbacks, use_yarg, CFRunLoopGetMain());
+    if (started == kIOReturnNotPermitted) {
         printf("macOS blocked access to input devices.\n");
         printf("Allow your terminal app in System Settings > Privacy & Security > Input Monitoring,\n");
         printf("then quit and reopen it and run this again.\n");
         return 1;
     }
-    if (opened != kIOReturnSuccess) {
-        printf("Could not start listening for devices (error 0x%08X)\n", opened);
+    if (started != kIOReturnSuccess) {
+        printf("Could not start listening for devices (error 0x%08X)\n", started);
         return 1;
     }
 
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
     add_timer(DISPLAY_INTERVAL, display_timer);
-    add_timer(1.0, protocol_timer);
     if (seconds > 0) {
         add_timer(seconds, stop_timer);
     }
 
     if (pair) {
         printf("Ctrl-C to finish.\n");
-        fflush(stdout);
-        pair_start();
+        pair_start(on_pair_status);
     } else {
         printf("Waiting for a paired Wiimote. Press any button on it to connect. Ctrl-C to finish.\n");
-        fflush(stdout);
     }
     CFRunLoopRun();
 
-    print_summary(app.earlier_reports + app.wm.input_reports);
+    print_summary();
     return 0;
 }

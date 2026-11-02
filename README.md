@@ -8,9 +8,9 @@ The first supported setup is a **Wii Guitar Hero guitar in
 similar tools only run on Windows, and this project is an attempt to fill that gap
 on the Mac.
 
-> **Early prototype.** It works, but it's a terminal tool plus a manually patched copy
-> of YARG, not yet an app. It has only been tested on one Mac (Apple Silicon, macOS 15)
-> with one original Wiimote and one Guitar Hero III Les Paul.
+> **Early prototype.** There's no download yet, so you build the app yourself. It has
+> only been tested on one Mac (Apple Silicon, macOS 15) with one original Wiimote and
+> one Guitar Hero III Les Paul.
 
 ## What works
 
@@ -27,10 +27,11 @@ on the Mac.
 ## How it works
 
 ```text
-Guitar -> Wiimote -> Bluetooth -> wiimote-test -> local connection -> add-on in YARG
+Guitar -> Wiimote -> Bluetooth -> Wiimote Mac -> local connection -> add-on in YARG
 ```
 
-- **`wiimote-test`** pairs with the Wiimote, reads the guitar and sends its state to YARG.
+- **Wiimote Mac** is a menu bar app that pairs with the Wiimote, reads the guitar and
+  sends its state to YARG. `wiimote-test` does the same from a terminal, for testing.
 - **The add-on** is a small .NET library loaded by YARG. It shows up in YARG as a
   regular five-fret guitar, so YARG's own default bindings apply.
 
@@ -44,51 +45,49 @@ needs its own add-on, and so far only YARG has one.**
 - Xcode command line tools and the [.NET SDK](https://dotnet.microsoft.com/download)
 - An original Wiimote, a Guitar Hero guitar and YARG. This has been tested with YARG v0.15.0.
 
-## Setup
+## Build
 
-Build the tool:
-
-```bash
-make
-```
-
-The add-on goes into a separate copy of YARG, so your real install stays untouched.
-The copy keeps its own settings, profiles and scores. Set `YARG_APP` to wherever your
-`YARG.app` is. With the YARC Launcher, it's in the launcher's `YARG Installs` folder.
+Compiling the add-on needs YARG's files, so point `YARG_APP` at your `YARG.app`. With
+the YARC Launcher, it's in the launcher's `YARG Installs` folder.
 
 ```bash
-mkdir yarg-copy
-cp -R "$YARG_APP" yarg-copy/
-(cd yarg-addon && dotnet build -c Release)
-python3 scripts/install_addon.py yarg-copy/YARG.app yarg-addon/bin/Release/netstandard2.1/WiimoteGuitarBridge.dll
-codesign --force --deep -s - yarg-copy/YARG.app
+make app YARG_APP="/path/to/YARG.app"
 ```
+
+This creates `build/WiimoteMac.app`. Move it wherever you like and open it. It adds an
+icon to the menu bar, with no window or Dock icon.
 
 ## Play
 
-1. Pair the Wiimote. You only need to do this once. Run the command below, then press
-   the red SYNC button under the battery cover, not 1 + 2.
+The first time, from the menu bar icon:
 
-   ```bash
-   ./wiimote-test --pair
-   ```
+1. Choose **Add Guitar to YARG**, with YARG closed. This adds the add-on file to your
+   YARG and edits two of its startup lists, after backing them up. No game code changes,
+   and **Remove from YARG** restores the originals.
+2. Choose **Pair a New Wiimote**, then press the red SYNC button under the battery
+   cover, not 1 + 2.
+3. Plug in the guitar and open YARG however you normally do. In your profile, choose
+   **Add New Device** and pick **Wii Guitar**. It only appears once the guitar is sending
+   data.
 
-2. Plug in the guitar, open `yarg-copy/YARG.app`, and start the bridge:
-
-   ```bash
-   ./wiimote-test --yarg
-   ```
-
-3. Press a Wiimote button to connect, and press Ctrl-C when you're done. The first time,
-   add a profile in YARG and choose **Wii Guitar** as its device. The guitar only
-   appears in YARG once the bridge is sending data.
+After that, open YARG, press a Wiimote button and play. Turn on **Start at Login** to
+keep the app ready. A YARG update can remove the add-on, in which case the menu asks you
+to add it again.
 
 macOS may list the Wiimote as a "Magic Trackpad". That's just a wrong label.
 
 ## Checking your setup
 
-Run `./wiimote-test` on its own to see live input without YARG. Pressing Ctrl-C prints
-which controls were seen and how steady the connection was. These options can help:
+To see live input without YARG, build and run the terminal tool. Quit the app first,
+since both would connect to the Wiimote. Pressing Ctrl-C prints which controls were
+seen and how steady the connection was. `--yarg` and `--pair` do what the app does.
+
+```bash
+make
+./wiimote-test
+```
+
+These options can help:
 
 - `--debug` shows the messages sent to and from the Wiimote.
 - `--no-display` hides the live status line.
@@ -131,7 +130,7 @@ Wii Remote Plus is expected to connect, but hasn't been tested.
 
 Other planned work:
 
-- A proper Mac app with built-in pairing and add-on installation
+- A signed download, so people don't have to build the app
 - More games, starting with checking whether Clone Hero is possible
 
 ## Credits

@@ -7,7 +7,6 @@
     <NoConfig>true</NoConfig>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
-    <ManagedDir Condition="'$(ManagedDir)' == ''">../yarg-copy/YARG.app/Contents/Resources/Data/Managed</ManagedDir>
   </PropertyGroup>
 
   <ItemGroup>

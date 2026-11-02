@@ -29,14 +29,34 @@
 @end
 
 @implementation WiimotePairer {
+    pair_status_fn _status;
     CBCentralManager *_central;
     IOBluetoothDeviceInquiry *_inquiry;
     IOBluetoothDevicePair *_pair;
     BOOL _announcedAlreadyPaired;
 }
 
+- (instancetype)initWithStatus:(pair_status_fn)status {
+    if ((self = [super init])) {
+        _status = status;
+    }
+    return self;
+}
+
 - (void)start {
     _central = [[CBCentralManager alloc] initWithDelegate:self queue:nil];
+}
+
+- (void)stop {
+    _central.delegate = nil;
+    _central = nil;
+    _inquiry.delegate = nil;
+    [_inquiry stop];
+    _inquiry = nil;
+}
+
+- (void)report:(pair_event)event message:(NSString *)message {
+    _status(event, message.UTF8String);
 }
 
 - (BOOL)privateCallsAvailable {
@@ -53,18 +73,18 @@
         return;
     }
     if (![self privateCallsAvailable]) {
-        printf("This version of macOS no longer has the Bluetooth calls needed for pairing.\n");
+        [self report:PAIR_STOPPED message:@"This version of macOS no longer has the Bluetooth calls needed for pairing."];
         return;
     }
     _inquiry = [IOBluetoothDeviceInquiry inquiryWithDelegate:self];
     _inquiry.searchType = kIOBluetoothDeviceSearchClassic;
     IOReturn result = [_inquiry start];
     if (result != kIOReturnSuccess) {
-        printf("Could not start the Bluetooth search: %s\n", mach_error_string(result));
+        [self report:PAIR_STOPPED
+             message:[NSString stringWithFormat:@"Could not start the Bluetooth search: %s", mach_error_string(result)]];
         return;
     }
-    printf("Searching. Press the red SYNC button under the Wiimote's battery cover.\n");
-    fflush(stdout);
+    [self report:PAIR_PROGRESS message:@"Searching. Press the red SYNC button under the Wiimote's battery cover."];
 }
 
 - (void)centralManagerDidUpdateState:(CBCentralManager *)central {
@@ -73,19 +93,19 @@
         [self startSearching];
         break;
     case CBManagerStatePoweredOff:
-        printf("Bluetooth is turned off. Turn it on to pair the Wiimote.\n");
+        [self report:PAIR_STOPPED message:@"Bluetooth is turned off. Turn it on to pair the Wiimote."];
         break;
     case CBManagerStateUnauthorized:
-        printf("macOS blocked Bluetooth access. Allow your terminal app in\n");
-        printf("System Settings > Privacy & Security > Bluetooth, then run this again.\n");
+        [self report:PAIR_STOPPED
+             message:@"macOS blocked Bluetooth access. Allow it in System Settings > Privacy & Security > Bluetooth, "
+                     @"then try again."];
         break;
     case CBManagerStateUnsupported:
-        printf("This Mac reports that Bluetooth isn't supported.\n");
+        [self report:PAIR_STOPPED message:@"This Mac reports that Bluetooth isn't supported."];
         break;
     default:
         break;
     }
-    fflush(stdout);
 }
 
 - (void)considerDevice:(IOBluetoothDevice *)device {
@@ -100,22 +120,22 @@
     if (device.isPaired) {
         if (!_announcedAlreadyPaired) {
             _announcedAlreadyPaired = YES;
-            printf("This Wiimote is already paired. Press a button on it to connect.\n");
-            printf("If it won't connect, remove it in System Settings > Bluetooth and pair again.\n");
-            fflush(stdout);
+            [self report:PAIR_PROGRESS
+                 message:@"This Wiimote is already paired, so press a button on it to connect. If it won't connect, "
+                         @"remove it in System Settings > Bluetooth and pair again."];
         }
         return;
     }
 
-    printf("Found %s. Pairing...\n", device.name.UTF8String);
-    fflush(stdout);
+    [self report:PAIR_PROGRESS message:[NSString stringWithFormat:@"Found %@. Pairing...", device.name]];
     [_inquiry stop];
     _pair = [IOBluetoothDevicePair pairWithDevice:device];
     _pair.delegate = self;
     [_pair setUserDefinedPincode:YES];
     IOReturn result = [_pair start];
     if (result != kIOReturnSuccess) {
-        printf("Could not start pairing: %s\n", mach_error_string(result));
+        [self report:PAIR_PROGRESS
+             message:[NSString stringWithFormat:@"Could not start pairing: %s", mach_error_string(result)]];
         [self searchAgain];
     }
 }
@@ -124,8 +144,7 @@
     _pair = nil;
     [_inquiry clearFoundDevices];
     [_inquiry start];
-    printf("Searching again. Press SYNC on the Wiimote.\n");
-    fflush(stdout);
+    [self report:PAIR_PROGRESS message:@"Searching again. Press SYNC on the Wiimote."];
 }
 
 - (void)deviceInquiryDeviceFound:(IOBluetoothDeviceInquiry *)sender device:(IOBluetoothDevice *)device {
@@ -144,7 +163,7 @@
     NSString *hostAddress = [[IOBluetoothHostController defaultController] addressAsString];
     BluetoothDeviceAddress address;
     if (IOBluetoothNSStringToDeviceAddress(hostAddress, &address) != kIOReturnSuccess) {
-        printf("Could not read this Mac's Bluetooth address.\n");
+        [self report:PAIR_PROGRESS message:@"Could not read this Mac's Bluetooth address."];
         return;
     }
     uint64_t key = wm_sync_pairing_key(address.data);
@@ -154,23 +173,29 @@
 
 - (void)devicePairingFinished:(id)sender error:(IOReturn)error {
     if (error != kIOReturnSuccess) {
-        printf("Pairing failed: %s\n", mach_error_string(error));
-        printf("Make sure you press the red SYNC button, not 1 + 2.\n");
+        [self report:PAIR_PROGRESS
+             message:[NSString stringWithFormat:@"Pairing failed: %s. Make sure you press the red SYNC button, not 1 + 2.",
+                                                mach_error_string(error)]];
         [_pair stop];
         [self searchAgain];
         return;
     }
     // Keep the pair object without stopping it: stopping disconnects the Wiimote,
     // which can abort the connection it is still setting up.
-    printf("Paired! Connecting to it now...\n");
-    fflush(stdout);
+    [self report:PAIR_PAIRED message:@"Paired! Connecting to it now..."];
 }
 
 @end
 
 static WiimotePairer *pairer;
 
-void pair_start(void) {
-    pairer = [[WiimotePairer alloc] init];
+void pair_start(pair_status_fn status) {
+    [pairer stop];
+    pairer = [[WiimotePairer alloc] initWithStatus:status];
     [pairer start];
+}
+
+void pair_stop(void) {
+    [pairer stop];
+    pairer = nil;
 }

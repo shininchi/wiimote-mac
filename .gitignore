@@ -2,6 +2,7 @@ wiimote-test
 test_wiimote
 *.dSYM/
 .DS_Store
-yarg-copy/
 bin/
 obj/
+CLAUDE.local.md
+build/
