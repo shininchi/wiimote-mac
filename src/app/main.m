@@ -248,6 +248,9 @@ static void RunSession(void) {
 
 - (void)pairingEvent:(pair_event)event message:(NSString *)message {
     [self log:message];
+    if (event == PAIR_DETAIL) {
+        return;
+    }
     _notice = message;
     if (event != PAIR_PROGRESS) {
         _pairing = NO;

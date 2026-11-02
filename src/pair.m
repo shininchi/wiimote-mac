@@ -15,6 +15,12 @@
 #include "pair.h"
 #include "wiimote.h"
 
+// 0x002594 is what an original Wiimote reports on macOS. The others are from its
+// published Bluetooth class and the Wii Remote Plus's.
+#define WIIMOTE_CLASS 0x002594
+#define WIIMOTE_PUBLISHED_CLASS 0x002504
+#define WIIMOTE_PLUS_CLASS 0x000508
+
 @interface IOBluetoothDevice (WiimotePrivate)
 - (id)classicPeer;
 @end
@@ -117,9 +123,13 @@
     if (_pair) {
         return;
     }
-    if (![device.name containsString:@"Nintendo RVL-CNT-01"]) {
-        // The name may not have arrived yet, so allow this device to be found again.
-        [_inquiry clearFoundDevices];
+    [self report:PAIR_DETAIL
+         message:[NSString stringWithFormat:@"Saw %@, class 0x%06X, paired: %d", device.name ?: @"(no name yet)",
+                                            device.classOfDevice, device.isPaired]];
+    // Names can arrive well after a device is found, or not at all while Bluetooth is
+    // busy with another Wiimote, so the device class is enough to recognize one.
+    if (![device.name containsString:@"Nintendo RVL-CNT-01"] && device.classOfDevice != WIIMOTE_CLASS &&
+        device.classOfDevice != WIIMOTE_PUBLISHED_CLASS && device.classOfDevice != WIIMOTE_PLUS_CLASS) {
         return;
     }
     if (device.isPaired) {
@@ -156,6 +166,12 @@
     [self considerDevice:device];
 }
 
+- (void)deviceInquiryDeviceNameUpdated:(IOBluetoothDeviceInquiry *)sender
+                                device:(IOBluetoothDevice *)device
+                      devicesRemaining:(uint32_t)devicesRemaining {
+    [self considerDevice:device];
+}
+
 - (void)deviceInquiryComplete:(IOBluetoothDeviceInquiry *)sender error:(IOReturn)error aborted:(BOOL)aborted {
     if (!aborted) {
         [sender clearFoundDevices];
@@ -171,6 +187,7 @@
         [self report:PAIR_PROGRESS message:@"Could not read this Mac's Bluetooth address."];
         return;
     }
+    [self report:PAIR_DETAIL message:@"Sending the PIN"];
     uint64_t key = wm_sync_pairing_key(address.data);
     id coordinator = [(id)NSClassFromString(@"IOBluetoothCoreBluetoothCoordinator") sharedInstance];
     [coordinator pairPeer:[[pair device] classicPeer] forType:[pair currentPairingType] withKey:@(key)];
@@ -179,8 +196,9 @@
 - (void)devicePairingFinished:(id)sender error:(IOReturn)error {
     if (error != kIOReturnSuccess) {
         [self report:PAIR_PROGRESS
-             message:[NSString stringWithFormat:@"Pairing failed: %s. Make sure you press the red SYNC button, not 1 + 2.",
-                                                mach_error_string(error)]];
+             message:[NSString stringWithFormat:@"Pairing failed: Bluetooth error 0x%02X. Make sure you press the red SYNC "
+                                                @"button, not 1 + 2.",
+                                                (unsigned)error]];
         [_pair stop];
         [self searchAgain];
         return;

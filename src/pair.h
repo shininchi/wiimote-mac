@@ -5,6 +5,7 @@
 #include <stdbool.h>
 
 typedef enum {
+    PAIR_DETAIL,   // Diagnostic information, not worth interrupting anyone for.
     PAIR_PROGRESS, // Still going. Show the message.
     PAIR_PAIRED,   // Done. The Wiimote will now connect.
     PAIR_STOPPED,  // Gave up because of a problem the message explains.

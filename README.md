@@ -56,6 +56,9 @@ the YARC Launcher, it's in the launcher's `YARG Installs` folder.
 make app YARG_APP="/path/to/YARG.app"
 ```
 
+Without a certificate, macOS asks for Bluetooth permission again after every build. If you
+have a personal code signing certificate, add `CODESIGN_IDENTITY="Its Name"` to avoid that.
+
 This creates `build/WiimoteMac.app`. Move it wherever you like and open it. It adds an
 icon to the menu bar, with no window or Dock icon.
 
