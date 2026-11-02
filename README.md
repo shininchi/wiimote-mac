@@ -87,8 +87,6 @@ new version of this app.
 If pairing keeps failing with error `0x02` or `0x1F`, restart your Mac. That fixed it when
 a Wiimote that works elsewhere wouldn't connect.
 
-macOS may list the Wiimote as a "Magic Trackpad". That's just a wrong label.
-
 ### Classic Controller
 
 It plays as a guitar, with a layout based on Guitar Hero's PS2 gamepad controls: L, ZL, ZR,
@@ -118,8 +116,12 @@ To run the tests, which use a simulated Wiimote and need no hardware:
 make test
 ```
 
-## Known limits
+## Known issues
 
+- **macOS lists Wiimotes as a Magic Trackpad.** Bluetooth settings shows the wrong device
+  type and offers trackpad settings, which don't apply. The Wiimote still works normally.
+  macOS reports its Bluetooth class as `0x002594`, a pointing device, which is the likely
+  cause. There's no known way to change the type, but you can rename it in the same window.
 - **Tilt and whammy are tuned for one guitar.** The values come from one Les Paul, and
   other guitars may need different ones.
 - **YARG updates can replace the add-on.** It's also tied to how YARG loads code, so a
