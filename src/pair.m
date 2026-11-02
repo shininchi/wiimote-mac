@@ -17,6 +17,7 @@
 
 // 0x002594 is what an original Wiimote reports on macOS. The others are from its
 // published Bluetooth class and the Wii Remote Plus's.
+#define CONNECT_TIMEOUT_SECONDS 15
 #define WIIMOTE_CLASS 0x002594
 #define WIIMOTE_PUBLISHED_CLASS 0x002504
 #define WIIMOTE_PLUS_CLASS 0x000508
@@ -44,7 +45,7 @@
     CBCentralManager *_central;
     IOBluetoothDeviceInquiry *_inquiry;
     IOBluetoothDevicePair *_pair;
-    BOOL _announcedAlreadyPaired;
+    IOBluetoothDevice *_connecting;
 }
 
 - (instancetype)initWithStatus:(pair_status_fn)status {
@@ -59,6 +60,7 @@
 }
 
 - (void)stop {
+    _connecting = nil;
     _central.delegate = nil;
     _central = nil;
     _inquiry.delegate = nil;
@@ -120,7 +122,7 @@
 }
 
 - (void)considerDevice:(IOBluetoothDevice *)device {
-    if (_pair) {
+    if (_pair || _connecting) {
         return;
     }
     [self report:PAIR_DETAIL
@@ -133,11 +135,8 @@
         return;
     }
     if (device.isPaired) {
-        if (!_announcedAlreadyPaired) {
-            _announcedAlreadyPaired = YES;
-            [self report:PAIR_PROGRESS
-                 message:@"This Wiimote is already paired, so press a button on it to connect. If it won't connect, "
-                         @"remove it in System Settings > Bluetooth and pair again."];
+        if (!device.isConnected) {
+            [self connectToPairedDevice:device];
         }
         return;
     }
@@ -153,6 +152,43 @@
              message:[NSString stringWithFormat:@"Could not start pairing: %s", mach_error_string(result)]];
         [self searchAgain];
     }
+}
+
+// A paired Wiimote in sync mode only needs connecting. Unlike a press of its other buttons,
+// this also works when another Wiimote is already connected, because the Mac starts it.
+- (void)connectToPairedDevice:(IOBluetoothDevice *)device {
+    [self report:PAIR_PROGRESS message:[NSString stringWithFormat:@"Found %@. Connecting...", device.name ?: @"a Wiimote"]];
+    [_inquiry stop];
+    _connecting = device;
+    IOReturn result = [device openConnection:self];
+    if (result != kIOReturnSuccess) {
+        [self connectionFailed:result];
+        return;
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, CONNECT_TIMEOUT_SECONDS * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        if (self->_connecting == device) {
+            [self connectionFailed:kIOReturnTimeout];
+        }
+    });
+}
+
+- (void)connectionComplete:(IOBluetoothDevice *)device status:(IOReturn)status {
+    if (device != _connecting) {
+        return;
+    }
+    if (status != kIOReturnSuccess) {
+        [self connectionFailed:status];
+        return;
+    }
+    _connecting = nil;
+    [self report:PAIR_PAIRED message:@"Connected!"];
+}
+
+- (void)connectionFailed:(IOReturn)error {
+    _connecting = nil;
+    [self report:PAIR_PROGRESS
+         message:[NSString stringWithFormat:@"Could not connect: Bluetooth error 0x%02X", (unsigned)error]];
+    [self searchAgain];
 }
 
 - (void)searchAgain {
@@ -210,41 +246,12 @@
 
 @end
 
-// A successful connection shows up in the session, so this only reports how it ended.
-@interface WiimoteConnector : NSObject
-@property(nonatomic) pair_status_fn status;
-@end
-
-@implementation WiimoteConnector
-- (void)connectionComplete:(IOBluetoothDevice *)device status:(IOReturn)status {
-    NSString *message = [NSString stringWithFormat:@"Connection to %@ finished: 0x%02X", device.addressString, (unsigned)status];
-    self.status(PAIR_DETAIL, message.UTF8String);
-}
-@end
-
 static WiimotePairer *pairer;
 
 void pair_start(pair_status_fn status) {
     [pairer stop];
     pairer = [[WiimotePairer alloc] initWithStatus:status];
     [pairer start];
-}
-
-int pair_connect_paired(pair_status_fn status) {
-    static WiimoteConnector *connector;
-    if (!connector) {
-        connector = [[WiimoteConnector alloc] init];
-    }
-    connector.status = status;
-    int started = 0;
-    for (IOBluetoothDevice *device in IOBluetoothDevice.pairedDevices) {
-        BOOL isWiimote = [device.name containsString:@"Nintendo RVL-CNT-01"] || device.classOfDevice == WIIMOTE_CLASS ||
-                         device.classOfDevice == WIIMOTE_PUBLISHED_CLASS || device.classOfDevice == WIIMOTE_PLUS_CLASS;
-        if (isWiimote && !device.isConnected && [device openConnection:connector] == kIOReturnSuccess) {
-            started++;
-        }
-    }
-    return started;
 }
 
 void pair_stop(void) {

@@ -29,6 +29,7 @@ static void WriteLog(NSString *message) {
 - (void)refresh;
 - (void)log:(NSString *)message;
 - (void)inputAccessBlocked;
+- (void)wiimoteConnected;
 - (void)pairingEvent:(pair_event)event message:(NSString *)message;
 @end
 
@@ -38,6 +39,13 @@ static void OnStateChange(void *ctx, int player) {
     (void)ctx, (void)player;
     dispatch_async(dispatch_get_main_queue(), ^{
         [delegate refresh];
+    });
+}
+
+static void OnConnected(void *ctx, int player) {
+    (void)ctx, (void)player;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [delegate wiimoteConnected];
     });
 }
 
@@ -67,7 +75,7 @@ static void OnPairingStatus(pair_event event, const char *message) {
 // such as keeping a menu open, can delay the guitar.
 static void RunSession(void) {
     session_callbacks callbacks = {
-        .connected = OnStateChange,
+        .connected = OnConnected,
         .disconnected = OnStateChange,
         .extension_changed = OnExtensionChanged,
         .problem = OnProblem,
@@ -87,9 +95,9 @@ static void RunSession(void) {
     NSStatusItem *_statusItem;
     NSMenuItem *_wiimoteLines[SESSION_MAX_WIIMOTES];
     NSMenuItem *_waitingLine, *_yargLine, *_noticeLine;
-    NSMenuItem *_pairItem, *_connectItem, *_openYargItem, *_setupItem, *_removeItem, *_loginItem;
+    NSMenuItem *_pairItem, *_openYargItem, *_setupItem, *_removeItem, *_loginItem;
     NSString *_notice, *_lastLoggedYargLine;
-    BOOL _pairing, _settingUp, _inputBlocked, _waitingForButton;
+    BOOL _pairing, _settingUp, _inputBlocked;
     uint64_t _lastReports;
     BOOL _receiving;
 }
@@ -153,8 +161,7 @@ static void RunSession(void) {
     _openYargItem = [self addActionTo:menu title:@"Open YARG" action:@selector(openYarg)];
     _setupItem = [self addActionTo:menu title:@"Add Guitar to YARG" action:@selector(chooseAndAddGuitar)];
     _removeItem = [self addActionTo:menu title:@"Remove from YARG" action:@selector(removeFromYarg)];
-    _connectItem = [self addActionTo:menu title:@"Connect Another Wiimote" action:@selector(connectAnother)];
-    _pairItem = [self addActionTo:menu title:@"Pair a New Wiimote" action:@selector(togglePairing)];
+    _pairItem = [self addActionTo:menu title:@"Add a Wiimote" action:@selector(togglePairing)];
     [menu addItem:NSMenuItem.separatorItem];
     _loginItem = [self addActionTo:menu title:@"Start at Login" action:@selector(toggleLogin)];
     [menu addItem:NSMenuItem.separatorItem];
@@ -181,15 +188,16 @@ static void RunSession(void) {
             continue;
         }
         guitar = guitar || wm_ext_plays_as_guitar(status.extension);
-        NSString *state = status.extension == WM_EXT_GUITAR ? @"guitar ready"
+        NSString *state = status.extension == WM_EXT_GUITAR ? @"Guitar ready"
                           : wm_ext_plays_as_guitar(status.extension)
-                              ? [NSString stringWithFormat:@"%s ready, playing as a guitar", wm_ext_name(status.extension)]
-                          : status.extension == WM_EXT_NONE ? @"nothing plugged in"
+                              ? [NSString stringWithFormat:@"%s ready", wm_ext_name(status.extension)]
+                          : status.extension == WM_EXT_NONE ? @"Plug in a guitar"
                                                             : [NSString stringWithFormat:@"%s isn't supported yet",
                                                                                          wm_ext_name(status.extension)];
         NSString *address = @(status.address);
         NSString *shortAddress = address.length >= 5 ? [address substringFromIndex:address.length - 5] : address;
-        _wiimoteLines[i].title = [NSString stringWithFormat:@"Player %d: %@ (%@)", i + 1, state, shortAddress];
+        _wiimoteLines[i].title = [NSString stringWithFormat:@"Player %d: %@", i + 1, state];
+        _wiimoteLines[i].toolTip = [NSString stringWithFormat:@"Shown in YARG as Wii Guitar %@", shortAddress];
     }
 
     uint64_t reports = session_input_reports();
@@ -197,10 +205,10 @@ static void RunSession(void) {
     _lastReports = reports;
 
     _waitingLine.hidden = connected && !_inputBlocked;
-    _waitingLine.title = _inputBlocked ? @"Wiimote: blocked by macOS" : @"Wiimote: press a button on it to connect";
+    _waitingLine.title = _inputBlocked ? @"Wiimote: blocked by macOS" : @"Press a button on your Wiimote to connect it";
 
     if (!guitar || !_receiving) {
-        _yargLine.title = @"YARG: waiting for the guitar";
+        _yargLine.title = @"YARG: waiting for a guitar";
     } else {
         _yargLine.title = session_yarg_listening() ? @"YARG: receiving the guitar" : @"YARG: not running with the add-on";
     }
@@ -214,7 +222,7 @@ static void RunSession(void) {
     NSString *notice = _notice;
     BOOL addonCurrent = hasAddon && [YargSetup addonIsCurrent:yarg];
     if (!notice && !hasAddon) {
-        notice = @"Choose Add Guitar to YARG to get started, or again after a YARG update";
+        notice = @"Choose Add Guitar to YARG to get started";
     } else if (!notice && !addonCurrent) {
         notice = @"The add-on in YARG is out of date. Quit YARG and choose Update Add-on";
     }
@@ -227,7 +235,7 @@ static void RunSession(void) {
     _setupItem.title = hasAddon ? @"Update Add-on in YARG" : @"Add Guitar to YARG";
     _removeItem.enabled = !_settingUp;
     _removeItem.hidden = !hasAddon;
-    _pairItem.title = _pairing ? @"Cancel Pairing" : @"Pair a New Wiimote";
+    _pairItem.title = _pairing ? @"Cancel" : @"Add a Wiimote";
 
     if (@available(macOS 13.0, *)) {
         _loginItem.state = SMAppService.mainAppService.status == SMAppServiceStatusEnabled ? NSControlStateValueOn
@@ -242,11 +250,18 @@ static void RunSession(void) {
     _statusItem.button.appearsDisabled = !connected;
     if (_pairing) {
         _statusItem.button.title = @" Press SYNC";
-    } else if (_waitingForButton) {
-        _statusItem.button.title = @" Press a Wiimote button";
     } else {
         _statusItem.button.title = image ? @"" : @"Wii";
     }
+}
+
+// A Wiimote can connect from its own button while the app is waiting for SYNC, which also
+// answers the request, so there's nothing left to wait for.
+- (void)wiimoteConnected {
+    if (_pairing) {
+        [self pairingEvent:PAIR_PAIRED message:@"Connected!"];
+    }
+    [self refresh];
 }
 
 - (void)inputAccessBlocked {
@@ -287,24 +302,6 @@ static void RunSession(void) {
         _notice = @"Starting Bluetooth...";
         pair_start(OnPairingStatus);
     }
-    [self refresh];
-}
-
-- (void)connectAnother {
-    int waiting = pair_connect_paired(OnPairingStatus);
-    [self log:[NSString stringWithFormat:@"Connecting from the Mac to %d paired Wiimotes", waiting]];
-    NSString *notice = waiting > 0 ? @"Now press a button on the Wiimote you want to connect"
-                                   : @"No other paired Wiimotes to connect";
-    _notice = notice;
-    // The menu closes on click, so the menu bar is what asks for the button press.
-    _waitingForButton = waiting > 0;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        self->_waitingForButton = NO;
-        if ([self->_notice isEqualToString:notice]) {
-            self->_notice = nil;
-        }
-        [self refresh];
-    });
     [self refresh];
 }
 

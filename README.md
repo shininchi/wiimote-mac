@@ -66,27 +66,23 @@ icon to the menu bar, with no window or Dock icon.
 
 The first time, from the menu bar icon:
 
-1. Choose **Add Guitar to YARG**, with YARG closed. This adds the add-on file to your
-   YARG and edits two of its startup lists, after backing them up. No game code changes,
-   and **Remove from YARG** restores the originals.
-2. Choose **Pair a New Wiimote**, then press the red SYNC button under the battery
-   cover, not 1 + 2.
-3. Plug in the guitar and open YARG however you normally do. In your profile, choose
-   **Add New Device** and pick **Wii Guitar**. It only appears once the guitar is sending
-   data.
+1. With YARG closed, choose **Add Guitar to YARG**. This adds the add-on file to your YARG
+   and edits two of its startup lists, after backing them up. No game code changes, and
+   **Remove from YARG** restores the originals.
+2. Choose **Add a Wiimote**, then press the red SYNC button under its battery cover. Do the
+   same for each Wiimote.
+3. Plug in a guitar and open YARG however you normally do. In each player's profile, choose
+   **Add New Device** and pick a **Wii Guitar**. It only appears once the guitar is sending
+   data, and hovering over a player in the menu shows which one is theirs.
 
-After that, open YARG, press a Wiimote button and play. Turn on **Start at Login** to
-keep the app ready. A YARG update can remove the add-on, in which case the menu asks you
-to add it again. It also offers to update the add-on after a new version of this app.
+After that:
 
-### More than one Wiimote
+- Press a button on each Wiimote to connect it. They become players in that order.
+- If one won't connect that way, choose **Add a Wiimote** and press its SYNC button.
 
-Each Wiimote gets its own player light and its own guitar in YARG, named after the end of
-its address, such as **Wii Guitar 8A:A4**. Pair each one, then assign a guitar in each
-player's profile. YARG should remember it by that Wiimote.
-
-The first Wiimote connects from its button. For each one after that, choose **Connect
-Another Wiimote** first, and then press a button on it. The other order fails.
+Turn on **Start at Login** to keep the app ready. A YARG update can remove the add-on, in
+which case the menu asks you to add it again. It also offers to update the add-on after a
+new version of this app.
 
 If pairing keeps failing with error `0x02` or `0x1F`, restart your Mac. That fixed it when
 a Wiimote that works elsewhere wouldn't connect.
