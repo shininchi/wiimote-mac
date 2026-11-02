@@ -210,13 +210,15 @@
 
 @end
 
-// Connecting finishes on its own, or not at all if the Wiimote's button isn't pressed,
-// and a successful connection shows up in the session, so there's nothing to do here.
+// A successful connection shows up in the session, so this only reports how it ended.
 @interface WiimoteConnector : NSObject
+@property(nonatomic) pair_status_fn status;
 @end
 
 @implementation WiimoteConnector
 - (void)connectionComplete:(IOBluetoothDevice *)device status:(IOReturn)status {
+    NSString *message = [NSString stringWithFormat:@"Connection to %@ finished: 0x%02X", device.addressString, (unsigned)status];
+    self.status(PAIR_DETAIL, message.UTF8String);
 }
 @end
 
@@ -228,11 +230,12 @@ void pair_start(pair_status_fn status) {
     [pairer start];
 }
 
-int pair_connect_paired(void) {
+int pair_connect_paired(pair_status_fn status) {
     static WiimoteConnector *connector;
     if (!connector) {
         connector = [[WiimoteConnector alloc] init];
     }
+    connector.status = status;
     int started = 0;
     for (IOBluetoothDevice *device in IOBluetoothDevice.pairedDevices) {
         BOOL isWiimote = [device.name containsString:@"Nintendo RVL-CNT-01"] || device.classOfDevice == WIIMOTE_CLASS ||

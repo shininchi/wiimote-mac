@@ -89,7 +89,7 @@ static void RunSession(void) {
     NSMenuItem *_waitingLine, *_yargLine, *_noticeLine;
     NSMenuItem *_pairItem, *_connectItem, *_openYargItem, *_setupItem, *_removeItem, *_loginItem;
     NSString *_notice, *_lastLoggedYargLine;
-    BOOL _pairing, _settingUp, _inputBlocked;
+    BOOL _pairing, _settingUp, _inputBlocked, _waitingForButton;
     uint64_t _lastReports;
     BOOL _receiving;
 }
@@ -242,6 +242,8 @@ static void RunSession(void) {
     _statusItem.button.appearsDisabled = !connected;
     if (_pairing) {
         _statusItem.button.title = @" Press SYNC";
+    } else if (_waitingForButton) {
+        _statusItem.button.title = @" Press a Wiimote button";
     } else {
         _statusItem.button.title = image ? @"" : @"Wii";
     }
@@ -289,16 +291,19 @@ static void RunSession(void) {
 }
 
 - (void)connectAnother {
-    int waiting = pair_connect_paired();
+    int waiting = pair_connect_paired(OnPairingStatus);
     [self log:[NSString stringWithFormat:@"Connecting from the Mac to %d paired Wiimotes", waiting]];
     NSString *notice = waiting > 0 ? @"Now press a button on the Wiimote you want to connect"
                                    : @"No other paired Wiimotes to connect";
     _notice = notice;
+    // The menu closes on click, so the menu bar is what asks for the button press.
+    _waitingForButton = waiting > 0;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        self->_waitingForButton = NO;
         if ([self->_notice isEqualToString:notice]) {
             self->_notice = nil;
-            [self refresh];
         }
+        [self refresh];
     });
     [self refresh];
 }
