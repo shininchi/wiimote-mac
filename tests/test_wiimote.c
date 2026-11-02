@@ -48,7 +48,7 @@ static void feed_ext_id(wiimote *w, const uint8_t id[6]) {
 // Takes a Wiimote from start to streaming, checking each message it sends.
 static void connect_with(wiimote *w, sent_log *log, const uint8_t id[6]) {
     wm_init(w, record, log);
-    wm_start(w);
+    wm_start(w, 0);
     assert(log->count == 2);
     assert(log->reports[0][0] == 0x11 && log->reports[0][1] == 0x10);
     assert(log->reports[1][0] == 0x15);
@@ -169,7 +169,9 @@ static void test_other_addons_are_identified(void) {
         uint8_t report[22];
         make_guitar_report(report);
         assert(wm_handle_report(&w, report, sizeof(report)));
-        assert(!w.guitar.green && w.guitar.whammy == 0); // only guitars decode as a guitar
+        if (!wm_ext_plays_as_guitar(w.ext)) {
+            assert(!w.guitar.green && w.guitar.whammy == 0); // the rest don't decode as a guitar
+        }
         assert(w.ext_raw[3] == 0x0F);
     }
 }
@@ -178,7 +180,7 @@ static void test_no_extension_streams_buttons_and_motion(void) {
     wiimote w;
     sent_log log = {0};
     wm_init(&w, record, &log);
-    wm_start(&w);
+    wm_start(&w, 0);
     feed_status(&w, false);
     const uint8_t *mode = last_sent(&log);
     assert(mode[0] == 0x12 && mode[2] == 0x31);
@@ -218,7 +220,7 @@ static void test_failures_do_not_advance_and_tick_retries(void) {
     wiimote w;
     sent_log log = {0};
     wm_init(&w, record, &log);
-    wm_start(&w);
+    wm_start(&w, 0);
     feed_status(&w, true);
     feed_write_ack(&w, 0x03); // a failed write
     assert(w.stage == WM_STAGE_EXT_INIT_1);
@@ -262,7 +264,7 @@ static void test_acks_for_other_reports_are_ignored(void) {
     wiimote w;
     sent_log log = {0};
     wm_init(&w, record, &log);
-    wm_start(&w);
+    wm_start(&w, 0);
     feed_status(&w, true);
     int before = log.count;
     const uint8_t led_ack[] = {0x22, 0x00, 0x00, 0x11, 0x00};
@@ -353,7 +355,7 @@ static void test_guitar_packet(void) {
     wm_guitar drift_right = {.stick_x = 44};
     assert(wm_guitar_to_packet(&drift_right, &highest).buttons == 0);
 
-    assert(sizeof(wm_bridge_packet) == 16);
+    assert(sizeof(wm_bridge_packet) == 24);
 }
 
 static bool feed_tilt(wm_tilt *tilt, uint8_t value, int reports) {
@@ -394,6 +396,119 @@ static void test_tilt(void) {
     assert(feed_tilt(&tilt, 102, 1));
 }
 
+static void test_each_player_gets_its_own_light(void) {
+    const uint8_t expected[] = {0x10, 0x20, 0x40, 0x80};
+    for (int player = 0; player < 4; player++) {
+        wiimote w;
+        sent_log log = {0};
+        wm_init(&w, record, &log);
+        wm_start(&w, player);
+        assert(log.reports[0][0] == 0x11 && log.reports[0][1] == expected[player]);
+    }
+}
+
+static const uint8_t CLASSIC_ID[6] = {0x00, 0x00, 0xA4, 0x20, 0x01, 0x01};
+
+// A Classic Controller at rest: every button bit high, and the sticks and triggers idle.
+static void make_classic_report(uint8_t report[22]) {
+    memset(report, 0, 22);
+    report[0] = 0x35;
+    report[6] = 0x60, report[7] = 0x60, report[8] = 0x0F, report[9] = 0x00;
+    report[10] = 0xFF, report[11] = 0xFF;
+}
+
+static void test_classic_controller_plays_as_a_guitar(void) {
+    wiimote w;
+    sent_log log = {0};
+    connect_with(&w, &log, CLASSIC_ID);
+    assert(wm_ext_plays_as_guitar(w.ext));
+
+    uint8_t report[22];
+    make_classic_report(report);
+    assert(wm_handle_report(&w, report, sizeof(report)));
+    wm_guitar g = w.guitar;
+    assert(!g.green && !g.red && !g.yellow && !g.blue && !g.orange && !g.strum_up && !g.strum_down && !g.plus && !g.minus);
+    assert(g.whammy == 16 && g.stick_x == 32);
+    uint8_t highest = 0;
+    assert(wm_guitar_to_packet(&g, &highest).buttons == 0);
+
+    static const struct {
+        int byte;
+        uint8_t bit;
+        size_t field;
+    } controls[] = {
+        {10, 0x20, offsetof(wm_guitar, green)},    {11, 0x80, offsetof(wm_guitar, red)},
+        {11, 0x04, offsetof(wm_guitar, yellow)},   {10, 0x02, offsetof(wm_guitar, blue)},
+        {11, 0x40, offsetof(wm_guitar, orange)},   {11, 0x01, offsetof(wm_guitar, strum_up)},
+        {10, 0x40, offsetof(wm_guitar, strum_down)}, {10, 0x10, offsetof(wm_guitar, minus)},
+        {10, 0x04, offsetof(wm_guitar, plus)},
+    };
+    for (size_t c = 0; c < sizeof(controls) / sizeof(controls[0]); c++) {
+        make_classic_report(report);
+        report[controls[c].byte] &= (uint8_t)~controls[c].bit;
+        assert(wm_handle_report(&w, report, sizeof(report)));
+        for (size_t d = 0; d < sizeof(controls) / sizeof(controls[0]); d++) {
+            assert(*(bool *)((char *)&w.guitar + controls[d].field) == (c == d));
+        }
+    }
+
+    make_classic_report(report);
+    report[11] &= (uint8_t)~0x02;
+    wm_handle_report(&w, report, sizeof(report));
+    assert(wm_guitar_to_packet(&w.guitar, &highest).buttons == 1u << 2); // menu left
+    make_classic_report(report);
+    report[10] &= (uint8_t)~0x80;
+    wm_handle_report(&w, report, sizeof(report));
+    assert(wm_guitar_to_packet(&w.guitar, &highest).buttons == 1u << 3); // menu right
+
+    make_classic_report(report);
+    report[7] = 0x60 | 56; // left stick all the way up
+    wm_handle_report(&w, report, sizeof(report));
+    assert(w.guitar.whammy == 26);
+    assert(wm_guitar_to_packet(&w.guitar, &highest).whammy == 1.0f);
+
+    make_classic_report(report);
+    report[7] = 0x60 | 63; // a stick that goes further stays at full whammy
+    wm_handle_report(&w, report, sizeof(report));
+    assert(w.guitar.whammy == 26);
+
+    make_classic_report(report);
+    report[7] = 0x60 | 36; // drift around the centre is ignored
+    wm_handle_report(&w, report, sizeof(report));
+    assert(w.guitar.whammy == 16);
+
+    make_classic_report(report);
+    report[7] = 0x60 | 5; // pushing down does nothing
+    wm_handle_report(&w, report, sizeof(report));
+    assert(w.guitar.whammy == 16);
+
+    // L and R count from about halfway, before their click.
+    make_classic_report(report);
+    report[9] = 0x0F; // right trigger reading 15 of 31
+    wm_handle_report(&w, report, sizeof(report));
+    assert(w.guitar.blue && !w.guitar.green);
+
+    make_classic_report(report);
+    report[9] = 0x0E;
+    wm_handle_report(&w, report, sizeof(report));
+    assert(!w.guitar.blue);
+
+    make_classic_report(report);
+    report[8] |= 0x40, report[9] |= 0xE0; // left trigger reading 23 of 31
+    wm_handle_report(&w, report, sizeof(report));
+    assert(w.guitar.green && !w.guitar.blue);
+
+    make_classic_report(report);
+    report[9] = 0x20; // left trigger reading 1 of 31
+    wm_handle_report(&w, report, sizeof(report));
+    assert(!w.guitar.green);
+
+    uint8_t zeros[22] = {0x35};
+    uint64_t invalid = w.invalid_ext_frames;
+    wm_handle_report(&w, zeros, sizeof(zeros));
+    assert(w.invalid_ext_frames == invalid + 1 && !w.guitar.green);
+}
+
 static void test_sync_pairing_key_is_reversed_address(void) {
     const uint8_t address[6] = {0x00, 0x1B, 0x63, 0x84, 0x45, 0xE6};
     // The PIN bytes are E6 45 84 63 1B 00, first byte lowest in the integer.
@@ -414,6 +529,8 @@ int main(void) {
     test_glitched_guitar_frames_are_ignored();
     test_guitar_packet();
     test_tilt();
+    test_each_player_gets_its_own_light();
+    test_classic_controller_plays_as_a_guitar();
     test_sync_pairing_key_is_reversed_address();
     printf("All tests passed\n");
     return 0;

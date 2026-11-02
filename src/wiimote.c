@@ -111,6 +111,49 @@ static void decode_guitar(wm_guitar *g, const uint8_t *ext) {
     g->strum_up = !(ext[5] & 0x01);
 }
 
+// Bit 0 of byte 4 is always high in real data, as with the guitar's fixed bits.
+static bool classic_frame_is_valid(const uint8_t *ext) {
+    return (ext[4] & 0x01) == 0x01;
+}
+
+#define CLASSIC_TRIGGER_PRESSED 15
+// Values from the published format, where the stick's centre is about 32 of 63. These
+// allow for some drift at rest, and for a stick that doesn't reach the very top.
+#define CLASSIC_STICK_REST 36
+#define CLASSIC_STICK_FULL_PUSH 20
+
+// Plays a Classic Controller as a guitar, which also lets it test multiplayer without a
+// second guitar. Buttons are active low. Layout per Linux's hid-wiimote driver.
+static void decode_classic_as_guitar(wm_guitar *g, const uint8_t *ext) {
+    bool left = !(ext[5] & 0x02), right = !(ext[4] & 0x80);
+    g->stick_x = left ? 0 : right ? 63 : 32;
+    g->stick_y = 32;
+    g->touch_bar = 0;
+    g->strum_up = !(ext[5] & 0x01);
+    g->strum_down = !(ext[4] & 0x40);
+    g->minus = !(ext[4] & 0x10);
+    g->plus = !(ext[4] & 0x04);
+
+    // The frets run left to right across the shoulder buttons, like Guitar Hero's PS2
+    // gamepad layout. L and R count from about halfway, as their click is stiff. On a
+    // Classic Controller Pro they're simply on or off.
+    uint8_t left_trigger = (uint8_t)(((ext[2] & 0x60) >> 2) | ((ext[3] & 0xE0) >> 5));
+    uint8_t right_trigger = ext[3] & 0x1F;
+    g->green = !(ext[4] & 0x20) || left_trigger >= CLASSIC_TRIGGER_PRESSED;
+    g->red = !(ext[5] & 0x80);
+    g->yellow = !(ext[5] & 0x04);
+    g->blue = !(ext[4] & 0x02) || right_trigger >= CLASSIC_TRIGGER_PRESSED;
+    g->orange = !(ext[5] & 0x40);
+
+    // Pushing the left stick up works the whammy.
+    uint8_t stick_y = ext[1] & 0x3F;
+    int push = stick_y > CLASSIC_STICK_REST ? stick_y - CLASSIC_STICK_REST : 0;
+    if (push > CLASSIC_STICK_FULL_PUSH) {
+        push = CLASSIC_STICK_FULL_PUSH;
+    }
+    g->whammy = (uint8_t)(WHAMMY_REST + push * (WHAMMY_MIN_FULL_TRAVEL - WHAMMY_REST) / CLASSIC_STICK_FULL_PUSH);
+}
+
 static void handle_status(wiimote *w, const uint8_t *report, size_t len) {
     if (len < 4) {
         return;
@@ -169,8 +212,8 @@ void wm_init(wiimote *w, wm_send_fn send, void *send_ctx) {
     w->send_ctx = send_ctx;
 }
 
-void wm_start(wiimote *w) {
-    const uint8_t led[] = {OUT_LED, 0x10};
+void wm_start(wiimote *w, int player) {
+    const uint8_t led[] = {OUT_LED, (uint8_t)(0x10 << (player & 3))};
     w->send(w->send_ctx, led, sizeof(led));
     w->stage = WM_STAGE_STATUS;
     send_status_request(w);
@@ -210,6 +253,12 @@ bool wm_handle_report(wiimote *w, const uint8_t *report, size_t len) {
         if (w->ext == WM_EXT_GUITAR) {
             if (guitar_frame_is_valid(w->ext_raw)) {
                 decode_guitar(&w->guitar, w->ext_raw);
+            } else {
+                w->invalid_ext_frames++;
+            }
+        } else if (w->ext == WM_EXT_CLASSIC || w->ext == WM_EXT_CLASSIC_PRO) {
+            if (classic_frame_is_valid(w->ext_raw)) {
+                decode_classic_as_guitar(&w->guitar, w->ext_raw);
             } else {
                 w->invalid_ext_frames++;
             }
@@ -285,6 +334,10 @@ uint64_t wm_sync_pairing_key(const uint8_t host_address[6]) {
         key |= (uint64_t)host_address[5 - i] << (8 * i);
     }
     return key;
+}
+
+bool wm_ext_plays_as_guitar(wm_ext_type ext) {
+    return ext == WM_EXT_GUITAR || ext == WM_EXT_CLASSIC || ext == WM_EXT_CLASSIC_PRO;
 }
 
 const char *wm_ext_name(wm_ext_type ext) {

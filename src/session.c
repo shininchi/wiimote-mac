@@ -20,21 +20,28 @@
 #define INPUT_BUFFER_SIZE 64
 #define YARG_SILENCE_SECONDS 1.0
 
-static struct {
-    session_callbacks callbacks;
+typedef struct {
+    int player;
     IOHIDDeviceRef device;
     wiimote wm;
     uint8_t input_buffer[INPUT_BUFFER_SIZE];
     bool extension_announced;
     wm_ext_type announced_extension;
-
-    int bridge_socket;
+    uint8_t address[6];
     uint8_t highest_whammy;
     wm_tilt tilt;
-    double last_refused_at;
 
+    char address_text[18];
     _Atomic bool connected;
     _Atomic int extension;
+} slot;
+
+static struct {
+    session_callbacks callbacks;
+    slot slots[SESSION_MAX_WIIMOTES];
+    int max_wiimotes;
+    int bridge_socket;
+    double last_refused_at;
     _Atomic uint64_t reports;
     _Atomic bool yarg_listening;
 } session = {.bridge_socket = -1};
@@ -52,22 +59,23 @@ static void report_problem(const char *message) {
 }
 
 static void send_report(void *ctx, const uint8_t *report, size_t len) {
-    (void)ctx;
+    slot *s = ctx;
     if (session.callbacks.report_seen) {
-        session.callbacks.report_seen(session.callbacks.ctx, true, report, len);
+        session.callbacks.report_seen(session.callbacks.ctx, s->player, true, report, len);
     }
-    IOReturn result = IOHIDDeviceSetReport(session.device, kIOHIDReportTypeOutput, report[0], report, (CFIndex)len);
+    IOReturn result = IOHIDDeviceSetReport(s->device, kIOHIDReportTypeOutput, report[0], report, (CFIndex)len);
     if (result != kIOReturnSuccess) {
         char message[80];
-        snprintf(message, sizeof(message), "Could not send report 0x%02X to the Wiimote (error 0x%08X)", report[0],
-                 result);
+        snprintf(message, sizeof(message), "Could not send report 0x%02X to Wiimote %d (error 0x%08X)", report[0],
+                 s->player + 1, result);
         report_problem(message);
     }
 }
 
-static void send_to_bridge(bool tilted) {
-    wm_bridge_packet packet = wm_guitar_to_packet(&session.wm.guitar, &session.highest_whammy);
+static void send_to_bridge(slot *s, bool tilted) {
+    wm_bridge_packet packet = wm_guitar_to_packet(&s->wm.guitar, &s->highest_whammy);
     packet.tilt = tilted ? 1.0f : 0.0f;
+    memcpy(packet.address, s->address, sizeof(packet.address));
 
     double now = now_seconds();
     if (send(session.bridge_socket, &packet, sizeof(packet), 0) < 0 && errno == ECONNREFUSED) {
@@ -76,22 +84,23 @@ static void send_to_bridge(bool tilted) {
     session.yarg_listening = session.last_refused_at == 0 || now - session.last_refused_at > YARG_SILENCE_SECONDS;
 }
 
-static void announce_extension(void) {
-    if (session.extension_announced && session.announced_extension == session.wm.ext) {
+static void announce_extension(slot *s) {
+    if (s->extension_announced && s->announced_extension == s->wm.ext) {
         return;
     }
-    session.extension_announced = true;
-    session.announced_extension = session.wm.ext;
-    session.extension = session.wm.ext;
+    s->extension_announced = true;
+    s->announced_extension = s->wm.ext;
+    s->extension = s->wm.ext;
     if (session.callbacks.extension_changed) {
-        session.callbacks.extension_changed(session.callbacks.ctx, &session.wm);
+        session.callbacks.extension_changed(session.callbacks.ctx, s->player, &s->wm);
     }
 }
 
 static void input_report_callback(void *ctx, IOReturn result, void *sender, IOHIDReportType type, uint32_t report_id,
                                   uint8_t *report, CFIndex length) {
-    (void)ctx, (void)sender, (void)type;
-    if (result != kIOReturnSuccess || length <= 0) {
+    (void)sender, (void)type;
+    slot *s = ctx;
+    if (result != kIOReturnSuccess || length <= 0 || !s->device) {
         return;
     }
 
@@ -106,12 +115,12 @@ static void input_report_callback(void *ctx, IOReturn result, void *sender, IOHI
         len++;
     }
 
-    bool is_input = wm_handle_report(&session.wm, buffer, len);
+    bool is_input = wm_handle_report(&s->wm, buffer, len);
     if (!is_input && session.callbacks.report_seen) {
-        session.callbacks.report_seen(session.callbacks.ctx, false, buffer, len);
+        session.callbacks.report_seen(session.callbacks.ctx, s->player, false, buffer, len);
     }
-    if (session.wm.stage == WM_STAGE_RUNNING) {
-        announce_extension();
+    if (s->wm.stage == WM_STAGE_RUNNING) {
+        announce_extension(s);
     }
     if (!is_input) {
         return;
@@ -119,14 +128,16 @@ static void input_report_callback(void *ctx, IOReturn result, void *sender, IOHI
 
     session.reports++;
     bool tilted = false;
-    if (session.wm.ext == WM_EXT_GUITAR) {
-        tilted = wm_tilt_update(&session.tilt, session.wm.accel_y);
+    if (wm_ext_plays_as_guitar(s->wm.ext)) {
+        // Tilting only makes sense with a guitar. Moving a Wiimote that's just attached
+        // to a Classic Controller shouldn't set off star power.
+        tilted = s->wm.ext == WM_EXT_GUITAR && wm_tilt_update(&s->tilt, s->wm.accel_y);
         if (session.bridge_socket >= 0) {
-            send_to_bridge(tilted);
+            send_to_bridge(s, tilted);
         }
     }
     if (session.callbacks.input) {
-        session.callbacks.input(session.callbacks.ctx, &session.wm, tilted);
+        session.callbacks.input(session.callbacks.ctx, s->player, &s->wm, tilted);
     }
 }
 
@@ -143,11 +154,45 @@ static bool is_wiimote(IOHIDDeviceRef device) {
     return name && CFStringFind(name, CFSTR("RVL-CNT"), 0).location != kCFNotFound;
 }
 
+// The address is what lets YARG tell Wiimotes apart between sessions.
+static void read_address(slot *s, IOHIDDeviceRef device) {
+    char text[32] = "";
+    CFStringRef serial = IOHIDDeviceGetProperty(device, CFSTR(kIOHIDSerialNumberKey));
+    if (serial) {
+        CFStringGetCString(serial, text, sizeof(text), kCFStringEncodingUTF8);
+    }
+    unsigned bytes[6];
+    if (sscanf(text, "%x%*1[:-]%x%*1[:-]%x%*1[:-]%x%*1[:-]%x%*1[:-]%x", &bytes[0], &bytes[1], &bytes[2], &bytes[3],
+               &bytes[4], &bytes[5]) != 6) {
+        // Without an address, fall back on the player number, which still keeps two apart.
+        memset(bytes, 0, sizeof(bytes));
+        bytes[5] = (unsigned)s->player + 1;
+    }
+    for (int i = 0; i < 6; i++) {
+        s->address[i] = (uint8_t)bytes[i];
+    }
+    snprintf(s->address_text, sizeof(s->address_text), "%02X:%02X:%02X:%02X:%02X:%02X", s->address[0], s->address[1],
+             s->address[2], s->address[3], s->address[4], s->address[5]);
+}
+
 static void device_matched(void *ctx, IOReturn result, void *sender, IOHIDDeviceRef device) {
     (void)ctx, (void)result, (void)sender;
-    if (session.device || !is_wiimote(device)) {
+    if (!is_wiimote(device)) {
         return;
     }
+    slot *s = NULL;
+    for (int i = 0; i < session.max_wiimotes; i++) {
+        if (session.slots[i].device == device) {
+            return;
+        }
+        if (!s && !session.slots[i].device) {
+            s = &session.slots[i];
+        }
+    }
+    if (!s) {
+        return;
+    }
+
     IOReturn opened = IOHIDDeviceOpen(device, kIOHIDOptionsTypeNone);
     if (opened != kIOReturnSuccess) {
         char message[80];
@@ -155,36 +200,41 @@ static void device_matched(void *ctx, IOReturn result, void *sender, IOHIDDevice
         report_problem(message);
         return;
     }
-    session.device = device;
-    session.extension_announced = false;
-    session.tilt = (wm_tilt){0};
-    session.connected = true;
+    s->device = device;
+    s->extension_announced = false;
+    s->tilt = (wm_tilt){0};
+    s->highest_whammy = 0;
+    read_address(s, device);
+    s->connected = true;
     if (session.callbacks.connected) {
-        session.callbacks.connected(session.callbacks.ctx);
+        session.callbacks.connected(session.callbacks.ctx, s->player);
     }
-    IOHIDDeviceRegisterInputReportCallback(device, session.input_buffer, INPUT_BUFFER_SIZE, input_report_callback,
-                                           NULL);
-    wm_init(&session.wm, send_report, NULL);
-    wm_start(&session.wm);
+    IOHIDDeviceRegisterInputReportCallback(device, s->input_buffer, INPUT_BUFFER_SIZE, input_report_callback, s);
+    wm_init(&s->wm, send_report, s);
+    wm_start(&s->wm, s->player);
 }
 
 static void device_removed(void *ctx, IOReturn result, void *sender, IOHIDDeviceRef device) {
     (void)ctx, (void)result, (void)sender;
-    if (device != session.device) {
-        return;
-    }
-    session.device = NULL;
-    session.connected = false;
-    session.extension = WM_EXT_NONE;
-    if (session.callbacks.disconnected) {
-        session.callbacks.disconnected(session.callbacks.ctx);
+    for (int i = 0; i < session.max_wiimotes; i++) {
+        slot *s = &session.slots[i];
+        if (s->device == device) {
+            s->device = NULL;
+            s->connected = false;
+            s->extension = WM_EXT_NONE;
+            if (session.callbacks.disconnected) {
+                session.callbacks.disconnected(session.callbacks.ctx, s->player);
+            }
+        }
     }
 }
 
 static void protocol_timer(CFRunLoopTimerRef timer, void *info) {
     (void)timer, (void)info;
-    if (session.device) {
-        wm_tick(&session.wm);
+    for (int i = 0; i < session.max_wiimotes; i++) {
+        if (session.slots[i].device) {
+            wm_tick(&session.slots[i].wm);
+        }
     }
 }
 
@@ -204,8 +254,12 @@ static int open_bridge_socket(void) {
     return fd;
 }
 
-IOReturn session_start(const session_callbacks *callbacks, bool send_to_yarg, CFRunLoopRef run_loop) {
+IOReturn session_start(const session_callbacks *callbacks, bool send_to_yarg, int max_wiimotes, CFRunLoopRef run_loop) {
     session.callbacks = *callbacks;
+    session.max_wiimotes = max_wiimotes < SESSION_MAX_WIIMOTES ? max_wiimotes : SESSION_MAX_WIIMOTES;
+    for (int i = 0; i < SESSION_MAX_WIIMOTES; i++) {
+        session.slots[i].player = i;
+    }
     if (send_to_yarg) {
         session.bridge_socket = open_bridge_socket();
         if (session.bridge_socket < 0) {
@@ -240,12 +294,23 @@ IOReturn session_start(const session_callbacks *callbacks, bool send_to_yarg, CF
     return kIOReturnSuccess;
 }
 
-bool session_is_connected(void) {
-    return session.connected;
+session_wiimote session_status(int player) {
+    session_wiimote status = {0};
+    if (player >= 0 && player < SESSION_MAX_WIIMOTES && session.slots[player].connected) {
+        status.connected = true;
+        status.extension = (wm_ext_type)session.slots[player].extension;
+        memcpy(status.address, session.slots[player].address_text, sizeof(status.address));
+    }
+    return status;
 }
 
-wm_ext_type session_extension(void) {
-    return (wm_ext_type)session.extension;
+bool session_any_connected(void) {
+    for (int i = 0; i < SESSION_MAX_WIIMOTES; i++) {
+        if (session.slots[i].connected) {
+            return true;
+        }
+    }
+    return false;
 }
 
 uint64_t session_input_reports(void) {

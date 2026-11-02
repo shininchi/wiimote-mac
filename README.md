@@ -79,7 +79,25 @@ After that, open YARG, press a Wiimote button and play. Turn on **Start at Login
 keep the app ready. A YARG update can remove the add-on, in which case the menu asks you
 to add it again. It also offers to update the add-on after a new version of this app.
 
+### More than one Wiimote
+
+Each Wiimote gets its own player light and its own guitar in YARG, named after the end of
+its address, such as **Wii Guitar 8A:A4**. Pair each one, then assign a guitar in each
+player's profile. YARG should remember it by that Wiimote.
+
+The first Wiimote connects from its button. For each one after that, choose **Connect
+Another Wiimote** first, and then press a button on it. The other order fails.
+
+If pairing keeps failing with error `0x02` or `0x1F`, restart your Mac. That fixed it when
+a Wiimote that works elsewhere wouldn't connect.
+
 macOS may list the Wiimote as a "Magic Trackpad". That's just a wrong label.
+
+### Classic Controller
+
+It plays as a guitar, with a layout based on Guitar Hero's PS2 gamepad controls: L, ZL, ZR,
+R and B are the green to orange frets, the D-pad strums, the left stick pushed up is the
+whammy, Minus is star power and Plus is Start. D-pad left and right work in menus.
 
 ## Checking your setup
 
@@ -125,8 +143,8 @@ something to control in a game.
 | Add-on | Status |
 |---|---|
 | Guitar Hero guitar | Works in YARG |
+| Classic Controller and Pro | Plays as a guitar in YARG |
 | Guitar Hero drums | Identified. The natural next step, since YARG supports drums |
-| Classic Controller and Pro | Identified |
 | Nunchuk | Identified |
 | DJ Hero turntable | Identified |
 | MotionPlus | Identified when active. Needs its own activation sequence |

@@ -34,18 +34,19 @@ static void WriteLog(NSString *message) {
 
 static AppDelegate *delegate;
 
-static void OnStateChange(void *ctx) {
-    (void)ctx;
+static void OnStateChange(void *ctx, int player) {
+    (void)ctx, (void)player;
     dispatch_async(dispatch_get_main_queue(), ^{
         [delegate refresh];
     });
 }
 
-static void OnExtensionChanged(void *ctx, const wiimote *wm) {
+static void OnExtensionChanged(void *ctx, int player, const wiimote *wm) {
     (void)ctx;
     NSString *name = @(wm_ext_name(wm->ext));
+    int number = player + 1;
     dispatch_async(dispatch_get_main_queue(), ^{
-        [delegate log:[@"Plugged into the Wiimote: " stringByAppendingString:name]];
+        [delegate log:[NSString stringWithFormat:@"Plugged into Wiimote %d: %@", number, name]];
         [delegate refresh];
     });
 }
@@ -71,7 +72,7 @@ static void RunSession(void) {
         .extension_changed = OnExtensionChanged,
         .problem = OnProblem,
     };
-    IOReturn started = session_start(&callbacks, true, CFRunLoopGetCurrent());
+    IOReturn started = session_start(&callbacks, true, SESSION_MAX_WIIMOTES, CFRunLoopGetCurrent());
     if (started != kIOReturnSuccess) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [delegate log:[NSString stringWithFormat:@"Could not listen for devices: 0x%08X", started]];
@@ -84,8 +85,9 @@ static void RunSession(void) {
 
 @implementation AppDelegate {
     NSStatusItem *_statusItem;
-    NSMenuItem *_wiimoteLine, *_guitarLine, *_yargLine, *_noticeLine;
-    NSMenuItem *_pairItem, *_openYargItem, *_setupItem, *_removeItem, *_loginItem;
+    NSMenuItem *_wiimoteLines[SESSION_MAX_WIIMOTES];
+    NSMenuItem *_waitingLine, *_yargLine, *_noticeLine;
+    NSMenuItem *_pairItem, *_connectItem, *_openYargItem, *_setupItem, *_removeItem, *_loginItem;
     NSString *_notice, *_lastLoggedYargLine;
     BOOL _pairing, _settingUp, _inputBlocked;
     uint64_t _lastReports;
@@ -141,14 +143,17 @@ static void RunSession(void) {
     menu.autoenablesItems = NO;
     menu.delegate = self;
 
-    _wiimoteLine = [self addInfoLineTo:menu];
-    _guitarLine = [self addInfoLineTo:menu];
+    _waitingLine = [self addInfoLineTo:menu];
+    for (int i = 0; i < SESSION_MAX_WIIMOTES; i++) {
+        _wiimoteLines[i] = [self addInfoLineTo:menu];
+    }
     _yargLine = [self addInfoLineTo:menu];
     _noticeLine = [self addInfoLineTo:menu];
     [menu addItem:NSMenuItem.separatorItem];
     _openYargItem = [self addActionTo:menu title:@"Open YARG" action:@selector(openYarg)];
     _setupItem = [self addActionTo:menu title:@"Add Guitar to YARG" action:@selector(chooseAndAddGuitar)];
     _removeItem = [self addActionTo:menu title:@"Remove from YARG" action:@selector(removeFromYarg)];
+    _connectItem = [self addActionTo:menu title:@"Connect Another Wiimote" action:@selector(connectAnother)];
     _pairItem = [self addActionTo:menu title:@"Pair a New Wiimote" action:@selector(togglePairing)];
     [menu addItem:NSMenuItem.separatorItem];
     _loginItem = [self addActionTo:menu title:@"Start at Login" action:@selector(toggleLogin)];
@@ -167,29 +172,32 @@ static void RunSession(void) {
 }
 
 - (void)refresh {
-    BOOL connected = session_is_connected();
-    wm_ext_type extension = session_extension();
-    BOOL guitar = connected && extension == WM_EXT_GUITAR;
+    BOOL connected = session_any_connected();
+    BOOL guitar = NO;
+    for (int i = 0; i < SESSION_MAX_WIIMOTES; i++) {
+        session_wiimote status = session_status(i);
+        _wiimoteLines[i].hidden = !status.connected;
+        if (!status.connected) {
+            continue;
+        }
+        guitar = guitar || wm_ext_plays_as_guitar(status.extension);
+        NSString *state = status.extension == WM_EXT_GUITAR ? @"guitar ready"
+                          : wm_ext_plays_as_guitar(status.extension)
+                              ? [NSString stringWithFormat:@"%s ready, playing as a guitar", wm_ext_name(status.extension)]
+                          : status.extension == WM_EXT_NONE ? @"nothing plugged in"
+                                                            : [NSString stringWithFormat:@"%s isn't supported yet",
+                                                                                         wm_ext_name(status.extension)];
+        NSString *address = @(status.address);
+        NSString *shortAddress = address.length >= 5 ? [address substringFromIndex:address.length - 5] : address;
+        _wiimoteLines[i].title = [NSString stringWithFormat:@"Player %d: %@ (%@)", i + 1, state, shortAddress];
+    }
 
     uint64_t reports = session_input_reports();
     _receiving = reports != _lastReports;
     _lastReports = reports;
 
-    if (_inputBlocked) {
-        _wiimoteLine.title = @"Wiimote: blocked by macOS";
-    } else {
-        _wiimoteLine.title = connected ? @"Wiimote: connected" : @"Wiimote: press a button on it to connect";
-    }
-
-    if (!connected) {
-        _guitarLine.title = @"Guitar: waiting for the Wiimote";
-    } else if (guitar) {
-        _guitarLine.title = @"Guitar: ready";
-    } else if (extension == WM_EXT_NONE) {
-        _guitarLine.title = @"Guitar: not plugged in";
-    } else {
-        _guitarLine.title = [NSString stringWithFormat:@"Guitar: %s isn't supported yet", wm_ext_name(extension)];
-    }
+    _waitingLine.hidden = connected && !_inputBlocked;
+    _waitingLine.title = _inputBlocked ? @"Wiimote: blocked by macOS" : @"Wiimote: press a button on it to connect";
 
     if (!guitar || !_receiving) {
         _yargLine.title = @"YARG: waiting for the guitar";
@@ -277,6 +285,21 @@ static void RunSession(void) {
         _notice = @"Starting Bluetooth...";
         pair_start(OnPairingStatus);
     }
+    [self refresh];
+}
+
+- (void)connectAnother {
+    int waiting = pair_connect_paired();
+    [self log:[NSString stringWithFormat:@"Connecting from the Mac to %d paired Wiimotes", waiting]];
+    NSString *notice = waiting > 0 ? @"Now press a button on the Wiimote you want to connect"
+                                   : @"No other paired Wiimotes to connect";
+    _notice = notice;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        if ([self->_notice isEqualToString:notice]) {
+            self->_notice = nil;
+            [self refresh];
+        }
+    });
     [self refresh];
 }
 

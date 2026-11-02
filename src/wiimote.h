@@ -56,13 +56,15 @@ typedef struct {
 // What the YARG add-on receives for each guitar update. The button bits and field
 // order must match WiiGuitarState in yarg-addon/Bridge.cs.
 #define WM_BRIDGE_PORT 47283
-#define WM_BRIDGE_MAGIC 0x31544757u // "WGT1"
+#define WM_BRIDGE_MAGIC 0x32544757u // "WGT2"
 
 typedef struct {
     uint32_t magic;
     uint32_t buttons;
     float whammy; // 0-1
     float tilt;   // 0-1
+    uint8_t address[6]; // the Wiimote's Bluetooth address, which identifies this guitar
+    uint8_t reserved[2];
 } wm_bridge_packet;
 
 // Detects the neck being raised for star power, from the Wiimote's motion sensor.
@@ -97,8 +99,8 @@ typedef struct {
 
 void wm_init(wiimote *w, wm_send_fn send, void *send_ctx);
 
-// Lights player 1's LED and starts detecting what is plugged into the Wiimote.
-void wm_start(wiimote *w);
+// Lights this player's LED, counting from 0, and starts detecting what is plugged in.
+void wm_start(wiimote *w, int player);
 
 // Feeds one report from the Wiimote, with its report ID as the first byte.
 // Returns true if it carried new input data.
@@ -108,6 +110,9 @@ bool wm_handle_report(wiimote *w, const uint8_t *report, size_t len);
 void wm_tick(wiimote *w);
 
 const char *wm_ext_name(wm_ext_type ext);
+
+// Whether this add-on's input is available as a guitar, in wiimote.guitar.
+bool wm_ext_plays_as_guitar(wm_ext_type ext);
 
 // Converts a guitar's state for the YARG add-on. highest_whammy remembers the
 // furthest the bar has gone, since its full travel varies; start it at 0.

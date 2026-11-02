@@ -122,8 +122,8 @@ static void print_status_line(void) {
     app.line_open = true;
 }
 
-static void on_connected(void *ctx) {
-    (void)ctx;
+static void on_connected(void *ctx, int player) {
+    (void)ctx, (void)player;
     app.connections++;
     app.connected_at = now_seconds();
     app.last_report_at = 0;
@@ -131,16 +131,16 @@ static void on_connected(void *ctx) {
     printf("Wiimote connected.\n");
 }
 
-static void on_disconnected(void *ctx) {
-    (void)ctx;
+static void on_disconnected(void *ctx, int player) {
+    (void)ctx, (void)player;
     app.total_connected_time += now_seconds() - app.connected_at;
     app.connected_at = 0;
     end_line();
     printf("Wiimote disconnected. Waiting for it to come back...\n");
 }
 
-static void on_extension_changed(void *ctx, const wiimote *wm) {
-    (void)ctx;
+static void on_extension_changed(void *ctx, int player, const wiimote *wm) {
+    (void)ctx, (void)player;
     end_line();
     printf("Plugged into the Wiimote: %s\n", wm_ext_name(wm->ext));
     if (wm->ext == WM_EXT_UNKNOWN) {
@@ -150,8 +150,8 @@ static void on_extension_changed(void *ctx, const wiimote *wm) {
     }
 }
 
-static void on_input(void *ctx, const wiimote *wm, bool tilted) {
-    (void)ctx;
+static void on_input(void *ctx, int player, const wiimote *wm, bool tilted) {
+    (void)ctx, (void)player;
     app.wm = wm;
     app.tilted = tilted;
     app.seen_tilt |= tilted;
@@ -177,8 +177,8 @@ static void on_input(void *ctx, const wiimote *wm, bool tilted) {
     track(&app.accel_z, wm->accel_z);
 }
 
-static void on_report_seen(void *ctx, bool outgoing, const uint8_t *report, size_t len) {
-    (void)ctx;
+static void on_report_seen(void *ctx, int player, bool outgoing, const uint8_t *report, size_t len) {
+    (void)ctx, (void)player;
     if (app.debug) {
         print_hex(outgoing ? "->" : "<-", report, len);
     }
@@ -199,7 +199,7 @@ static void on_pair_status(pair_event event, const char *message) {
 
 static void display_timer(CFRunLoopTimerRef timer, void *info) {
     (void)timer, (void)info;
-    if (app.wm && session_is_connected() && app.show_live_line) {
+    if (app.wm && session_any_connected() && app.show_live_line) {
         print_status_line();
     }
 }
@@ -362,7 +362,7 @@ int main(int argc, char **argv) {
         .report_seen = on_report_seen,
         .problem = on_problem,
     };
-    IOReturn started = session_start(&callbacks, use_yarg, CFRunLoopGetMain());
+    IOReturn started = session_start(&callbacks, use_yarg, 1, CFRunLoopGetMain());
     if (started == kIOReturnNotPermitted) {
         printf("macOS blocked access to input devices.\n");
         printf("Allow your terminal app in System Settings > Privacy & Security > Input Monitoring,\n");

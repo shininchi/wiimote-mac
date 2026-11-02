@@ -20,4 +20,9 @@ void pair_start(pair_status_fn status);
 // Cancels pairing if it's in progress.
 void pair_stop(void);
 
+// Starts connecting from the Mac to paired Wiimotes that aren't connected, for each one's
+// button to complete. A second Wiimote can't connect from its button alone, and this has
+// to come first. Returns how many it's waiting for. Runs on the main run loop.
+int pair_connect_paired(void);
+
 #endif

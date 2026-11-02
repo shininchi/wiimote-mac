@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// Receives the guitar's state from the wiimote-test tool over a local connection and
-// presents it to YARG as a regular five-fret guitar.
+// Receives guitar states from Wiimote Mac over a local connection and presents each
+// Wiimote's guitar to YARG as a regular five-fret guitar.
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -52,9 +53,10 @@ namespace WiimoteGuitar
     public static class Bridge
     {
         private const int PORT = 47283;
-        private const uint MAGIC = 0x31544757; // "WGT1"
-        private const int PACKET_SIZE = 16;
+        private const uint MAGIC = 0x32544757; // "WGT2"
+        private const int PACKET_SIZE = 24;
         private const uint VALID_BUTTONS = 0x7FF;
+        private const string INTERFACE_NAME = "WiimoteMac";
         // Reports arrive about every 10ms, so this long without one means the Wiimote
         // has gone away. Releases everything so that no note stays held.
         private const double SILENCE_SECONDS = 0.5;
@@ -65,24 +67,31 @@ namespace WiimoteGuitar
 
         private struct Received
         {
+            public ulong address;
             public WiiGuitarState state;
             public long arrivedAt;
         }
 
+        private class Guitar
+        {
+            public WiiGuitar device;
+            public string label;
+            public uint lastLoggedButtons;
+            public long lastPacketAt;
+            public bool released = true;
+        }
+
         private static readonly ConcurrentQueue<Received> Incoming = new ConcurrentQueue<Received>();
         private static readonly ConcurrentQueue<string> LogLines = new ConcurrentQueue<string>();
-
-        private static WiiGuitar _device;
-        private static uint _lastLoggedPressed;
-        private static long _lastPacketAt;
-        private static bool _released = true;
+        private static readonly Dictionary<ulong, Guitar> Guitars = new Dictionary<ulong, Guitar>();
 
         public static void Initialize()
         {
             Log("Add-on loaded");
             try
             {
-                InputSystem.RegisterLayout<WiiGuitar>();
+                InputSystem.RegisterLayout<WiiGuitar>(
+                    matches: new InputDeviceMatcher().WithInterface(INTERFACE_NAME));
                 InputSystem.onBeforeUpdate += OnBeforeUpdate;
                 new Thread(ReceiveLoop) { IsBackground = true, Name = "WiimoteGuitarBridge" }.Start();
             }
@@ -117,8 +126,15 @@ namespace WiimoteGuitar
                     {
                         continue;
                     }
+
+                    ulong address = 0;
+                    for (int i = 0; i < 6; i++)
+                    {
+                        address = (address << 8) | data[16 + i];
+                    }
                     Incoming.Enqueue(new Received
                     {
+                        address = address,
                         arrivedAt = Stopwatch.GetTimestamp(),
                         state = new WiiGuitarState
                         {
@@ -135,40 +151,59 @@ namespace WiimoteGuitar
             }
         }
 
-        // Runs on the main thread just before Unity processes input events, so the
+        // The address in the description is what lets YARG remember which profile goes
+        // with which Wiimote, and the end of it tells them apart in YARG's device list.
+        private static Guitar AddGuitar(ulong address)
+        {
+            string text = address.ToString("X12");
+            string label = $"Wii Guitar {text.Substring(8, 2)}:{text.Substring(10, 2)}";
+            var device = (WiiGuitar) InputSystem.AddDevice(new InputDeviceDescription
+            {
+                interfaceName = INTERFACE_NAME,
+                product = label,
+                serial = text,
+            });
+            LogLines.Enqueue($"Added device '{device.displayName}'");
+            var guitar = new Guitar { device = device, label = label };
+            Guitars[address] = guitar;
+            return guitar;
+        }
+
+        // Runs on the main thread just before Unity processes input events, so each
         // guitar is handled in the same update it arrived for.
         private static void OnBeforeUpdate()
         {
             long now = Stopwatch.GetTimestamp();
             while (Incoming.TryDequeue(out var received))
             {
-                if (_device == null)
+                if (!Guitars.TryGetValue(received.address, out var guitar))
                 {
-                    _device = InputSystem.AddDevice<WiiGuitar>();
-                    LogLines.Enqueue($"Added device '{_device.displayName}'");
+                    guitar = AddGuitar(received.address);
                 }
 
                 // Report when it actually arrived, so that YARG judges the hit by the
                 // moment of the press and not by when this frame came around.
                 double age = (now - received.arrivedAt) / (double) Stopwatch.Frequency;
-                InputSystem.QueueStateEvent(_device, received.state, InputState.currentTime - age);
-                _lastPacketAt = received.arrivedAt;
-                _released = false;
+                InputSystem.QueueStateEvent(guitar.device, received.state, InputState.currentTime - age);
+                guitar.lastPacketAt = received.arrivedAt;
+                guitar.released = false;
 
-                if (received.state.buttons != _lastLoggedPressed)
+                if (received.state.buttons != guitar.lastLoggedButtons)
                 {
-                    _lastLoggedPressed = received.state.buttons;
-                    LogLines.Enqueue($"Buttons {received.state.buttons:X3} whammy {received.state.whammy:F2}");
+                    guitar.lastLoggedButtons = received.state.buttons;
+                    LogLines.Enqueue($"{guitar.label}: buttons {received.state.buttons:X3} whammy {received.state.whammy:F2}");
                 }
             }
 
-            if (_device != null && !_released &&
-                (now - _lastPacketAt) / (double) Stopwatch.Frequency > SILENCE_SECONDS)
+            foreach (var guitar in Guitars.Values)
             {
-                InputSystem.QueueStateEvent(_device, new WiiGuitarState());
-                _released = true;
-                _lastLoggedPressed = 0;
-                LogLines.Enqueue("No data from the guitar, released all controls");
+                if (!guitar.released && (now - guitar.lastPacketAt) / (double) Stopwatch.Frequency > SILENCE_SECONDS)
+                {
+                    InputSystem.QueueStateEvent(guitar.device, new WiiGuitarState());
+                    guitar.released = true;
+                    guitar.lastLoggedButtons = 0;
+                    LogLines.Enqueue($"{guitar.label}: no data, released all controls");
+                }
             }
         }
 
