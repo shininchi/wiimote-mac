@@ -21,8 +21,10 @@ on the Mac.
 | Whammy, analog | Yes |
 | Star power with Select | Yes |
 | Star power by tilting | Yes |
-| Start | Read, but not tried in YARG |
-| Touch bar and stick | Read, but not sent to YARG |
+| Start, including pausing a song | Yes |
+| Stick left and right | Menus only |
+| Stick up and down | Read, but not sent, because YARG would treat them as strums |
+| Touch bar, on later guitars | Read, but not sent to YARG |
 
 ## How it works
 
@@ -72,7 +74,7 @@ The first time, from the menu bar icon:
 
 After that, open YARG, press a Wiimote button and play. Turn on **Start at Login** to
 keep the app ready. A YARG update can remove the add-on, in which case the menu asks you
-to add it again.
+to add it again. It also offers to update the add-on after a new version of this app.
 
 macOS may list the Wiimote as a "Magic Trackpad". That's just a wrong label.
 

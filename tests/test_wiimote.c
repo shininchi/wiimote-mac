@@ -315,15 +315,18 @@ static void test_glitched_guitar_frames_are_ignored(void) {
 
 static void test_guitar_packet(void) {
     uint8_t highest = 0;
-    wm_guitar g = {.green = true, .orange = true, .strum_down = true, .minus = true, .whammy = 15};
+    wm_guitar g = {.green = true, .orange = true, .strum_down = true, .minus = true, .whammy = 15, .stick_x = 33};
     wm_bridge_packet p = wm_guitar_to_packet(&g, &highest);
     assert(p.magic == WM_BRIDGE_MAGIC);
     assert(p.buttons == ((1u << 4) | (1u << 8) | (1u << 1) | (1u << 10)));
     assert(p.whammy == 0 && p.tilt == 0);
 
     // Each control has its own bit, as Bridge.cs expects.
-    wm_guitar each[] = {{.strum_up = true}, {.strum_down = true}, {.green = true}, {.red = true}, {.yellow = true},
-                        {.blue = true},     {.orange = true},     {.plus = true},  {.minus = true}};
+    wm_guitar each[] = {{.strum_up = true, .stick_x = 33}, {.strum_down = true, .stick_x = 33},
+                        {.green = true, .stick_x = 33},    {.red = true, .stick_x = 33},
+                        {.yellow = true, .stick_x = 33},   {.blue = true, .stick_x = 33},
+                        {.orange = true, .stick_x = 33},   {.plus = true, .stick_x = 33},
+                        {.minus = true, .stick_x = 33}};
     const int bits[] = {0, 1, 4, 5, 6, 7, 8, 9, 10};
     for (size_t i = 0; i < sizeof(bits) / sizeof(bits[0]); i++) {
         assert(wm_guitar_to_packet(&each[i], &highest).buttons == 1u << bits[i]);
@@ -339,6 +342,17 @@ static void test_guitar_packet(void) {
     assert(wm_guitar_to_packet(&whammy, &highest).whammy == 1.0f);
     whammy.whammy = 26;
     assert(wm_guitar_to_packet(&whammy, &highest).whammy < 1.0f);
+    wm_guitar centered = {.stick_x = 33};
+    assert(wm_guitar_to_packet(&centered, &highest).buttons == 0);
+    wm_guitar left = {.stick_x = 4};
+    assert(wm_guitar_to_packet(&left, &highest).buttons == 1u << 2);
+    wm_guitar right = {.stick_x = 62};
+    assert(wm_guitar_to_packet(&right, &highest).buttons == 1u << 3);
+    wm_guitar drift = {.stick_x = 20};
+    assert(wm_guitar_to_packet(&drift, &highest).buttons == 0);
+    wm_guitar drift_right = {.stick_x = 44};
+    assert(wm_guitar_to_packet(&drift_right, &highest).buttons == 0);
+
     assert(sizeof(wm_bridge_packet) == 16);
 }
 

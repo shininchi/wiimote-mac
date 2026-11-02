@@ -202,6 +202,11 @@ static NSString *Add(NSString *yarg) {
     return [NSFileManager.defaultManager fileExistsAtPath:AddonPath(yarg)];
 }
 
++ (BOOL)addonIsCurrent:(NSString *)yarg {
+    NSString *addon = [NSBundle.mainBundle pathForResource:AddonName ofType:@"dll"];
+    return addon && [NSFileManager.defaultManager contentsEqualAtPath:addon andPath:AddonPath(yarg)];
+}
+
 + (void)addTo:(NSString *)yarg completion:(void (^)(NSString *_Nullable))completion {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSString *problem = Add(yarg);

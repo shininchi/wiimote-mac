@@ -32,6 +32,11 @@
 #define WHAMMY_REST 16
 #define WHAMMY_MIN_FULL_TRAVEL 26
 
+// The stick rests at about 33 and travels from 4 to 62, so only a clear push counts.
+// Up and down aren't sent, because the game treats those as strums.
+#define STICK_LEFT 16
+#define STICK_RIGHT 48
+
 // Measured on a Les Paul: the neck axis reads 102 pointing up and 155 pointing down,
 // so about 128 when level and 26.5 per g. The trigger is about 55 degrees up and the
 // release about 30. The neck must stay raised for about 130ms, so that a hard strum
@@ -236,7 +241,8 @@ wm_bridge_packet wm_guitar_to_packet(const wm_guitar *g, uint8_t *highest_whammy
     wm_bridge_packet packet = {.magic = WM_BRIDGE_MAGIC};
     packet.buttons = (g->strum_up ? 1u << 0 : 0) | (g->strum_down ? 1u << 1 : 0) | (g->green ? 1u << 4 : 0) |
                      (g->red ? 1u << 5 : 0) | (g->yellow ? 1u << 6 : 0) | (g->blue ? 1u << 7 : 0) |
-                     (g->orange ? 1u << 8 : 0) | (g->plus ? 1u << 9 : 0) | (g->minus ? 1u << 10 : 0);
+                     (g->orange ? 1u << 8 : 0) | (g->plus ? 1u << 9 : 0) | (g->minus ? 1u << 10 : 0) |
+                     (g->stick_x <= STICK_LEFT ? 1u << 2 : 0) | (g->stick_x >= STICK_RIGHT ? 1u << 3 : 0);
 
     if (*highest_whammy < WHAMMY_MIN_FULL_TRAVEL) {
         *highest_whammy = WHAMMY_MIN_FULL_TRAVEL;

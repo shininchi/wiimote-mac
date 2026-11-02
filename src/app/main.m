@@ -204,15 +204,19 @@ static void RunSession(void) {
     NSString *yarg = [YargSetup currentYarg];
     BOOL hasAddon = yarg && [YargSetup hasAddon:yarg];
     NSString *notice = _notice;
+    BOOL addonCurrent = hasAddon && [YargSetup addonIsCurrent:yarg];
     if (!notice && !hasAddon) {
         notice = @"Choose Add Guitar to YARG to get started, or again after a YARG update";
+    } else if (!notice && !addonCurrent) {
+        notice = @"The add-on in YARG is out of date. Quit YARG and choose Update Add-on";
     }
     _noticeLine.title = notice ?: @"";
     _noticeLine.hidden = notice == nil;
 
     _openYargItem.enabled = !_settingUp && yarg != nil;
     _setupItem.enabled = !_settingUp;
-    _setupItem.hidden = hasAddon;
+    _setupItem.hidden = addonCurrent;
+    _setupItem.title = hasAddon ? @"Update Add-on in YARG" : @"Add Guitar to YARG";
     _removeItem.enabled = !_settingUp;
     _removeItem.hidden = !hasAddon;
     _pairItem.title = _pairing ? @"Cancel Pairing" : @"Pair a New Wiimote";

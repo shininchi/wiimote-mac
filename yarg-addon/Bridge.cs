@@ -54,7 +54,7 @@ namespace WiimoteGuitar
         private const int PORT = 47283;
         private const uint MAGIC = 0x31544757; // "WGT1"
         private const int PACKET_SIZE = 16;
-        private const uint VALID_BUTTONS = 0x7F3;
+        private const uint VALID_BUTTONS = 0x7FF;
         // Reports arrive about every 10ms, so this long without one means the Wiimote
         // has gone away. Releases everything so that no note stays held.
         private const double SILENCE_SECONDS = 0.5;

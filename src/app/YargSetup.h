@@ -14,6 +14,9 @@ NS_ASSUME_NONNULL_BEGIN
 // Whether this YARG has the add-on. A YARG update removes it.
 + (BOOL)hasAddon:(NSString *)yarg;
 
+// Whether this YARG's add-on is the one included with this version of the app.
++ (BOOL)addonIsCurrent:(NSString *)yarg;
+
 // These run in the background and call back on the main thread, with nil on success.
 + (void)addTo:(NSString *)yarg completion:(void (^)(NSString *_Nullable error))completion;
 + (void)removeFrom:(NSString *)yarg completion:(void (^)(NSString *_Nullable error))completion;
